@@ -26,7 +26,7 @@
     "quantity": 1,
     "cancelPositionAbove": 5,
     "favoritesTimeoutSeconds": 60,
-    "purchaseTimeoutSeconds": 300,
+    "purchaseTimeoutSeconds": 3600,
     "ttcnTimeoutSeconds": 60,
     "batchIntervalSeconds": 2,
     "continuous": true,

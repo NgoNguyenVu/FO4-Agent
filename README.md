@@ -32,10 +32,10 @@ Both the Web K `@username` hash and the Web A numeric chat ID
 - ICON task slots: `iconBuy.maxTaskSlots` (3). The agent counts running `MUA`
   tasks from the `/stop` baseline and only places a new ICON task while slots
   remain. With a manual task using 1/3, `/starticon` uses the remaining 2/3.
-- ICON purchase wait: `iconBuy.purchaseTimeoutSeconds` (300 seconds). If the bot
-  has not logged a placed order by then, the new ICON task is stopped (only that
-  task) and TTCN is checked once more before the session ends. The bot may still
-  be validating prices for the multi-code batch, so the wait is kept generous.
+- ICON purchase wait: `iconBuy.purchaseTimeoutSeconds` (3600 seconds). Buys can
+  take 1-2 hours (price validation + placement), so the wait stays generous; the
+  new ICON task is only stopped if the bot has not logged a placed order by then
+  and TTCN is checked once more before the session ends.
 - Seasons and upgrade-grade selections: left as selected in the mini-app
 
 Each new cycle uses the configured maximum quantity. The agent does not impose
