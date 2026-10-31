@@ -40,7 +40,7 @@ config.iconBuy.maxBatchesPerRun = 1;
 config.iconBuy.purchaseTimeoutSeconds =
   Number(process.env.FO4_ICON_TIMEOUT_SECONDS) > 0
     ? Number(process.env.FO4_ICON_TIMEOUT_SECONDS)
-    : 120;
+    : 300;
 
 const profileDir =
   process.argv[2] ||

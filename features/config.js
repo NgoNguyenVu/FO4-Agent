@@ -36,7 +36,7 @@ const config = {
     cancelPositionAbove: 5,
     menuTimeoutSeconds: 45,
     favoritesTimeoutSeconds: 60,
-    purchaseTimeoutSeconds: 180,
+    purchaseTimeoutSeconds: 300,
     ttcnTimeoutSeconds: 60,
     batchIntervalSeconds: 2,
     // Chạy tuần hoàn: sau khi hủy đơn, mua bù lại slot; khi đủ slot thì chờ.
