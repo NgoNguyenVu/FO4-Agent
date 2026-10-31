@@ -1638,6 +1638,85 @@ test("controller imports every shared telegram-io helper it calls", () => {
   assert.equal(typeof telegramIo.closeMiniApp, "function");
 });
 
+test("controller runs /starticon as a background session, not as a main mode", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "features/controller.js"), "utf8");
+  assert.match(src, /const\s*\{\s*createUiLock\s*\}\s*=\s*require\("\.\.\/lib\/ui-lock"\)/);
+  assert.match(src, /const\s*\{\s*createIconSession\s*\}\s*=\s*require\("\.\/icon-session"\)/);
+  assert.match(
+    src,
+    /createIconSession\(\{[\s\S]*?\brunIconBuy\b[\s\S]*?\}\)/
+  );
+  assert.match(
+    src,
+    /if \(command === "starticon"\) \{\s*startIconSession\(\);\s*return;\s*\}/m
+  );
+  assert.match(
+    src,
+    /if \(command === "stopagent"\) \{\s*iconSession\.abort\("\/stopagent"\);\s*return;\s*\}/m
+  );
+  assert.match(src, /iconSession\.stopAndWait\("khôi phục Telegram Web", 45_000\)/);
+  assert.doesNotMatch(src, /mode\s*===\s*"icon"/);
+  assert.doesNotMatch(src, /mode\s*=\s*"icon"/);
+  assert.match(src, /runSingleUpgrade\(page, rl, upgradeBlockedTargetIds, ui\)/);
+});
+
+test("buy and upgrade stop flows do not turn /starticon into a main mode", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  for (const file of ["features/buy/cycle.js", "features/upgrade/runner.js"]) {
+    const src = fs.readFileSync(path.join(__dirname, file), "utf8");
+    assert.match(
+      src,
+      /command === "starticon"[\s\S]{0,240}phiên ICON chạy nền/,
+      `${file} must consume /starticon without restarting the main flow in icon mode`
+    );
+  }
+});
+
+test("/starticon cleans up its own new purchase task and TTCN order on timeout or abort", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const orderSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/order.js"),
+    "utf8"
+  );
+  const runnerSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/runner.js"),
+    "utf8"
+  );
+  assert.match(orderSrc, /error\.purchaseSent = true/);
+  assert.match(orderSrc, /isStopRequested/);
+  assert.match(orderSrc, /if \(typeof isStopRequested === "function" && isStopRequested\(\)\)/);
+  assert.match(runnerSrc, /captureStopTaskBaseline/);
+  assert.match(runnerSrc, /stopNewIconTasks/);
+  assert.match(runnerSrc, /cancelUnconfirmedOrders/);
+  assert.match(runnerSrc, /if \(error\.purchaseSent\)/);
+  assert.match(runnerSrc, /if \(result\.stopped\)/);
+  assert.match(runnerSrc, /const usedTaskSlots = countRunningTaskSlots/);
+  assert.match(runnerSrc, /getAvailableTaskSlots/);
+  assert.match(runnerSrc, /reason: "task-slots-full"/);
+  assert.match(runnerSrc, /reason: "no-task-baseline"/);
+  assert.match(runnerSrc, /reason: "no-purchase-success"/);
+  assert.match(runnerSrc, /reason: "icon-task-stop-failed"/);
+  assert.doesNotMatch(runnerSrc, /Dừng tất cả/);
+});
+
+test("/starticon fills the 3 MUA slots and loops after canceling a bad order", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const runnerSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/runner.js"),
+    "utf8"
+  );
+  assert.match(runnerSrc, /const availableTaskSlots = getAvailableTaskSlots/);
+  assert.match(runnerSrc, /config\.iconBuy\.maxPlayersPerBatch/);
+  assert.match(runnerSrc, /config\.iconBuy\.continuous/);
+  assert.match(runnerSrc, /slotPollSeconds/);
+  assert.match(runnerSrc, /stopOrphanIconTasks\([\s\S]*?cancelTargets/);
+});
+
 test("upgrade mini-app imports the telegram-io helpers it calls", () => {
   // Hồi quy: openUpgradeFrame() gọi closeMiniApp() nhưng file quên import,
   // gây ReferenceError chỉ khi chạy thật.
@@ -1662,8 +1741,8 @@ test("upgrade run detector is reachable at module scope", () => {
   const path = require("node:path");
   const read = (file) => fs.readFileSync(path.join(__dirname, file), "utf8");
   const upgradeSrc = read("features/upgrade/loop.js");
-  assert.ok(/^async function pivotMasterToUpgrade\(page, rl, runUpgrade = runSingleUpgrade, logFn = log\)/m.test(upgradeSrc));
-  assert.ok(/^async function runSingleUpgrade/m.test(upgradeSrc));
+  assert.ok(/^async function pivotMasterToUpgrade\(page, rl, runUpgrade = runSingleUpgrade, logFn = log, ui = null\)/m.test(upgradeSrc));
+  assert.ok(/^async function runSingleUpgrade\(page, rl, blockedTargetIds = new Set\(\), ui = null\)/m.test(upgradeSrc));
   const buyOutcomeSrc = read("features/buy/outcome.js");
   assert.ok(/^async function settleBuyOutcome/m.test(buyOutcomeSrc));
   const buyCycleSrc = read("features/buy/cycle.js");

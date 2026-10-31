@@ -252,6 +252,12 @@ async function stopPurchaseWorker(page, rl) {
   let lastOrphanClearedAt = 0;
   while (Date.now() < deadline) {
     for (const command of reader.takeCommandsMatching(["stopagent", ...CONTROL_START_COMMANDS])) {
+      if (command === "starticon") {
+        // /starticon không còn là mode của luồng chính: observer đã mở phiên
+        // ICON nền khi lệnh đến. Chỉ tiêu thụ lệnh để không đổi mode mua/nâng.
+        log("Đã nhận /starticon trong lúc dừng; phiên ICON chạy nền, giữ nguyên mode mua/nâng.");
+        continue;
+      }
       if (CONTROL_START_COMMANDS.includes(command)) {
         restartCommand = command;
         log(`Đã nhận /${command} trong lúc dừng; sẽ khởi động lại sau khi bot xác nhận dừng.`);

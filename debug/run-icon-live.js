@@ -35,8 +35,12 @@ const { parseCompactBp } = require("../features/icon-buy/patterns");
 
 // Giới hạn tối thiểu cho lần test thật.
 config.iconBuy.maxPlayersPerBatch = 1;
+config.iconBuy.continuous = false;
 config.iconBuy.maxBatchesPerRun = 1;
-config.iconBuy.purchaseTimeoutSeconds = 120;
+config.iconBuy.purchaseTimeoutSeconds =
+  Number(process.env.FO4_ICON_TIMEOUT_SECONDS) > 0
+    ? Number(process.env.FO4_ICON_TIMEOUT_SECONDS)
+    : 120;
 
 const profileDir =
   process.argv[2] ||
@@ -67,15 +71,21 @@ async function main() {
     // Test có kiểm soát: chọn cầu thủ rẻ nhất trong danh sách yêu thích để
     // chắc chắn đủ BP và thực sự đi được tới bước đặt đơn/hủy đơn. Production
     // vẫn random hoàn toàn khi controller gọi runIconBuy(page, rl).
+    // Có thể ép một mã cụ thể bằng FO4_ICON_TEST_CODE để thử thanh khoản khác.
+    const preferredCode = process.env.FO4_ICON_TEST_CODE || null;
     const result = await runIconBuy(page, rl, {
-      pickPlayers: (favorites) =>
-        [...favorites]
+      pickPlayers: (favorites) => {
+        const pool = preferredCode
+          ? favorites.filter((player) => player.code === preferredCode)
+          : favorites;
+        return [...pool]
           .sort(
             (a, b) =>
               (parseCompactBp(a.listedPrice) ?? Number.POSITIVE_INFINITY) -
               (parseCompactBp(b.listedPrice) ?? Number.POSITIVE_INFINITY)
           )
-          .slice(0, 1)
+          .slice(0, 1);
+      }
     });
     console.log(`Kết quả phiên ICON: ${JSON.stringify(result)}`);
 

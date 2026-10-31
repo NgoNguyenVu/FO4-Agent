@@ -7,6 +7,7 @@ const {
   buildPurchaseLines,
   selectRandomIconPlayers,
   parsePurchaseSuccesses,
+  filterIconPurchaseSuccesses,
   mergePurchaseSuccesses,
   getLatestBotError,
   isOrderLimitError,
@@ -28,14 +29,12 @@ const FAVORITES_TEXT = [
   "103000001 - TKI Player - TKI - Grade: +1 - OVR: 100 - 5,000,000"
 ].join("\n");
 
-test("icon favorites parser keeps ICON seasons and dedupes player codes", () => {
+test("icon favorites parser keeps only the pure ICON season and dedupes player codes", () => {
   const players = parseFavoriteIconPlayers(FAVORITES_TEXT);
   assert.deepEqual(
     players.map((player) => [player.code, player.name, player.season]),
     [
-      ["101001201", "Gianfranco Zola", "ICON"],
-      ["101042331", "Rivaldo", "ICONTM"],
-      ["103000001", "TKI Player", "TKI"]
+      ["101001201", "Gianfranco Zola", "ICON"]
     ]
   );
   assert.equal(players[0].listedGrade, 1);
@@ -43,13 +42,12 @@ test("icon favorites parser keeps ICON seasons and dedupes player codes", () => 
   assert.equal(players[0].listedPrice, "44,300,000");
 });
 
-test("only ICON/TKI seasons count as icon favorites", () => {
+test("only pure ICON seasons count as icon favorites", () => {
   assert.equal(isIconSeason("ICON"), true);
-  assert.equal(isIconSeason("ICONTM"), true);
-  assert.equal(isIconSeason("ICONS MATCH"), true);
-  assert.equal(isIconSeason("TKI"), true);
-  assert.equal(isIconSeason("26TOTS"), false);
-  assert.equal(isIconSeason("ICONIC"), true); // chứa ICON, chấp nhận để không bỏ sót mùa mới
+  assert.equal(isIconSeason("ICONTM"), false);
+  assert.equal(isIconSeason("ICONS MATCH"), false);
+  assert.equal(isIconSeason("TKI"), false);
+  assert.equal(isIconSeason("ICONIC"), false);
 });
 
 test("purchase lines always use +1 and quantity 1", () => {
@@ -94,6 +92,28 @@ test("purchase log parser reads position and E004", () => {
   assert.equal(successes[1].position, null);
   assert.equal(successes[1].positionError, "E004");
   assert.match(successes[1].time, /^2026-10-26 19:18:03\.500/);
+});
+
+test("icon purchase logs must match code, grade and quantity exactly", () => {
+  const text = [
+    "Đã đặt mua thành công 101001201 | 1 | 44,300,000 | 1/1 lúc 2026-10-26 19:18:02.120. Vị trí mua: 2",
+    // Cùng mã nhưng do Auto Mua đang chạy song song đặt +1 x3.
+    "Đã đặt mua thành công 101001201 | 1 | 44,300,000 | 3/3 lúc 2026-10-26 19:18:03.120. Vị trí mua: 9",
+    // Khớp một phần của lệnh x3 cũng không được nhận nhầm là 1/1.
+    "Đã đặt mua thành công 101001201 | 1 | 44,300,000 | 1/3 lúc 2026-10-26 19:18:03.620. Vị trí mua: 9",
+    "Đã đặt mua thành công 101001201 | 2 | 44,300,000 | 1/1 lúc 2026-10-26 19:18:04.120. Vị trí mua: 8",
+    "Đã đặt mua thành công 101042331 | 1 | 23,400,000 | 1/1 lúc 2026-10-26 19:18:05.120. Vị trí mua: 4"
+  ].join("\n");
+  const filtered = filterIconPurchaseSuccesses(
+    parsePurchaseSuccesses(text),
+    [{ code: "101001201" }],
+    1,
+    1
+  );
+  assert.deepEqual(
+    filtered.map((item) => [item.code, item.grade, item.quantity, item.position]),
+    [["101001201", 1, 1, 2]]
+  );
 });
 
 test("later purchase log for the same code replaces the older one but keeps a known position", () => {

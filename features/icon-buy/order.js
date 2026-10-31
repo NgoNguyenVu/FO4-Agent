@@ -15,6 +15,7 @@ const {
 const {
   buildPurchaseLines,
   parsePurchaseSuccesses,
+  filterIconPurchaseSuccesses,
   mergePurchaseSuccesses,
   getLatestBotError,
   isOrderLimitError,
@@ -194,9 +195,15 @@ async function openMemberBuyPrompt(page, rl) {
   log("Bot đã yêu cầu nhập danh sách mã cầu thủ (MãCầuThủ MứcThẻ SốLượng).");
 }
 
-async function waitForPurchaseResults(page, reader, baselineText, players, baselineIds = null) {
+async function waitForPurchaseResults(
+  page,
+  reader,
+  baselineText,
+  players,
+  baselineIds = null,
+  { isStopRequested = null } = {}
+) {
   const deadline = Date.now() + config.iconBuy.purchaseTimeoutSeconds * 1_000;
-  const wanted = new Set(players.map((player) => player.code));
   let successes = [];
   let latestText = reader.snapshot().text;
   // Chỉ reset đồng hồ im lặng khi dữ liệu của chính các mã ICON thay đổi.
@@ -208,6 +215,16 @@ async function waitForPurchaseResults(page, reader, baselineText, players, basel
   let fatalStopAt = Infinity;
 
   while (Date.now() < deadline) {
+    if (typeof isStopRequested === "function" && isStopRequested()) {
+      const found = new Set(successes.map((item) => item.code));
+      return {
+        successes,
+        missing: players.filter((player) => !found.has(player.code)),
+        fresh: lastFresh,
+        fatalError,
+        stopped: true
+      };
+    }
     const update = await waitForChatChange(page, reader, reader.snapshot().version, 1_000);
     if (update) latestText = update.text;
     // Ưu tiên message id mới để không bỏ sót log khi Telegram trim mất mốc
@@ -220,9 +237,14 @@ async function waitForPurchaseResults(page, reader, baselineText, players, basel
     if (!fresh) fresh = getFreshSince(baselineText, latestText) || "";
     if (fresh) lastFresh = fresh;
     // Auto Mua có thể đang chạy song song và cũng ghi log "Đã đặt mua thành
-    // công"; chỉ nhận log của đúng các mã ICON đã chọn trong lượt này.
-    const parsed = parsePurchaseSuccesses(fresh || "").filter((item) =>
-      wanted.has(item.code)
+    // công"; chỉ nhận log khớp đúng mã + grade + số lượng của lượt ICON này.
+    // Nếu chỉ lọc theo mã, log +1 x3 của Auto Mua cùng mã sẽ bị coi là đơn ICON
+    // và có thể khiến agent giữ/hủy nhầm đơn của worker đang chạy song song.
+    const parsed = filterIconPurchaseSuccesses(
+      parsePurchaseSuccesses(fresh || ""),
+      players,
+      config.iconBuy.grade,
+      config.iconBuy.quantity
     );
     if (parsed.length) {
       successes = mergePurchaseSuccesses(successes, parsed);
@@ -314,7 +336,7 @@ async function waitForPurchaseResults(page, reader, baselineText, players, basel
   return { successes, missing, fresh: lastFresh, fatalError };
 }
 
-async function placeIconOrders(page, rl, players) {
+async function placeIconOrders(page, rl, players, { ui = null, isStopRequested = null } = {}) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
   if (!players.length) return { successes: [], missing: [], fresh: "" };
@@ -325,13 +347,29 @@ async function placeIconOrders(page, rl, players) {
   const lines = buildPurchaseLines(players, config.iconBuy.grade, config.iconBuy.quantity);
   log(`Gửi ${players.length} cầu thủ ICON: ${lines.replace(/\n/g, "; ")}.`);
   await sendMultilineMessage(page, rl, lines);
-  const result = await waitForPurchaseResults(
-    page,
-    reader,
-    baseline.text,
-    players,
-    baselineIds
-  );
+  // Đã gửi lệnh mua: chỉ còn đọc chat để chờ log/vị trí. Nhả khóa UI để luồng
+  // mua/nâng đang chạy song song mở/đóng mini-app của nó. Nếu đơn ICON cần hủy,
+  // runner sẽ lấy lại khóa trước khi mở TTCN.
+  if (ui) ui.release();
+  let result;
+  try {
+    result = await waitForPurchaseResults(
+      page,
+      reader,
+      baseline.text,
+      players,
+      baselineIds,
+      { isStopRequested }
+    );
+  } catch (error) {
+    // Đã gửi lệnh mua thì không được thử lại mù: retry có thể tạo thêm task
+    // hoặc đặt thêm đơn. Runner dùng cờ này để dừng đúng task mới và kiểm tra
+    // TTCN trước khi kết thúc phiên.
+    error.purchaseSent = true;
+    throw error;
+  } finally {
+    if (ui) await ui.acquire();
+  }
   for (const success of result.successes) {
     const positionText = success.position == null
       ? success.positionError || "không rõ vị trí"

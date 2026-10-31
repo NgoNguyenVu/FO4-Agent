@@ -13,10 +13,12 @@ async function settleBuyOutcome(
   page,
   rl,
   outcome,
-  { pivotToUpgrade = false, completedLog = "" } = {}
+  { pivotToUpgrade = false, completedLog = "", ui = null } = {}
 ) {
   if (outcome.status === "stop-requested") {
-    const restart = await stopPurchaseWorker(page, rl);
+    const restart = ui
+      ? await ui.withLock(() => stopPurchaseWorker(page, rl))
+      : await stopPurchaseWorker(page, rl);
     log(
       restart
         ? `Đã nhận /${restart} trong lúc dừng; tiếp tục sau khi xác nhận.`

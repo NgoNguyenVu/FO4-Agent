@@ -28,7 +28,9 @@ const config = {
   // yêu thích "Tra cứu mã cầu thủ offline", mua +1/1, rồi kết thúc (không lặp).
   // Vị trí mua > ngưỡng hoặc không lấy được vị trí sẽ được hủy qua tab TTCN.
   iconBuy: {
-    maxPlayersPerBatch: 1,
+    // Mỗi lượt gửi tối đa 3 mã (giới hạn của bot). Số mã thực tế được chọn
+    // bằng số slot MUA còn trống, để luôn mua bù đủ maxTaskSlots.
+    maxPlayersPerBatch: 3,
     grade: 1,
     quantity: 1,
     cancelPositionAbove: 5,
@@ -37,8 +39,14 @@ const config = {
     purchaseTimeoutSeconds: 180,
     ttcnTimeoutSeconds: 60,
     batchIntervalSeconds: 2,
+    // Chạy tuần hoàn: sau khi hủy đơn, mua bù lại slot; khi đủ slot thì chờ.
+    // Đặt false để giữ hành vi one-shot cũ (dừng sau maxBatchesPerRun).
+    continuous: true,
+    slotPollSeconds: 15,
     maxBatchesPerRun: 1,
     captureTtcnBaseline: true,
+    // Số task mua cho phép của bot; task thủ công đang chạy sẽ dùng slot này.
+    maxTaskSlots: 3,
     ...(rawConfig.iconBuy || {})
   }
 };
@@ -133,12 +141,20 @@ function validateIconBuyConfig() {
   requirePositiveInteger(s.purchaseTimeoutSeconds, "iconBuy.purchaseTimeoutSeconds");
   requirePositiveInteger(s.ttcnTimeoutSeconds, "iconBuy.ttcnTimeoutSeconds");
   requireNonNegativeInteger(s.batchIntervalSeconds, "iconBuy.batchIntervalSeconds");
+  requirePositiveInteger(s.slotPollSeconds, "iconBuy.slotPollSeconds");
   requireNonNegativeInteger(s.maxBatchesPerRun, "iconBuy.maxBatchesPerRun");
   if (s.grade !== 1 || s.quantity !== 1) {
     throw new Error("Luồng ICON chỉ hỗ trợ mức thẻ +1 và số lượng 1.");
   }
+  if (typeof s.continuous !== "boolean") {
+    throw new Error("iconBuy.continuous phải là true/false.");
+  }
   if (typeof s.captureTtcnBaseline !== "boolean") {
     throw new Error("iconBuy.captureTtcnBaseline phải là true/false.");
+  }
+  requirePositiveInteger(s.maxTaskSlots, "iconBuy.maxTaskSlots");
+  if (s.maxTaskSlots > 3) {
+    throw new Error("iconBuy.maxTaskSlots tối đa là 3 (giới hạn của bot).");
   }
 }
 

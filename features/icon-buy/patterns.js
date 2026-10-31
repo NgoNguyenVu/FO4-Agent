@@ -10,7 +10,7 @@ const POSITION_E004_RE = /Không lấy được vị trí mua\s*\(?E004\)?/i;
 const ORDER_LIMIT_RE = /E007|giới hạn tối đa\s*\d+\s*lệnh đang chạy/i;
 const ERROR_CODE_RE = /\bE\d{3}\b[^\n]*/gi;
 const RATE_LIMIT_RE = /(?:chờ|đợi)\s*(\d+)\s*s\s*(?:rồi|nữa)?\s*(?:hãy\s*)?(?:thử lại)?/i;
-const ICON_SEASON_RE = /(?:ICON|TKI)/i;
+const ICON_SEASON_RE = /^ICON$/i;
 
 // Menu chức năng của bot có nhãn "Chèn Member Thường" và "Auto Mua Phôi".
 // Dùng để nhận biết menu còn dùng được sau /tn hoặc trong lịch sử gần đây.
@@ -23,6 +23,8 @@ function hasIconMenuSignature(text) {
 }
 
 function isIconSeason(season) {
+  // Chỉ mùa "ICON" thuần được tính; các biến thể như ICONTM/ICONS MATCH/TKI
+  // không phải là ICON cho luồng /starticon.
   return ICON_SEASON_RE.test(String(season || ""));
 }
 
@@ -52,6 +54,8 @@ function parseFavoriteIconPlayers(text) {
 
 // Bot luôn nhận MứcThẻ và SốLượng theo từng dòng. Luồng ICON cố định +1/1
 // theo yêu cầu, không lấy mức thẻ đang có trong danh sách yêu thích.
+// Chỉ giữ mùa ICON thuần: ICONTM / ICONS MATCH / TKI không được tính là ICON
+// cho luồng /starticon.
 function buildPurchaseLines(players, grade = 1, quantity = 1) {
   return players
     .map((player) => `${player.code} ${grade} ${quantity}`)
@@ -102,6 +106,25 @@ function parsePurchaseSuccesses(text) {
     });
   }
   return successes;
+}
+
+// Auto Mua có thể chạy song song và mua cùng mã với grade/số lượng khác.
+// Chỉ log khớp đúng mã + grade + số lượng của phiên ICON mới được coi là đơn
+// của phiên này; nếu chỉ lọc theo mã, agent có thể đọc nhầm log của worker khác
+// rồi giữ/hủy đơn của worker đó.
+function filterIconPurchaseSuccesses(successes, players, grade, quantity) {
+  const wanted = new Set((players || []).map((player) => String(player.code)));
+  const wantGrade = Number(grade);
+  const wantQuantity = Number(quantity);
+  return (successes || []).filter(
+    (item) =>
+      wanted.has(String(item.code)) &&
+      Number(item.grade) === wantGrade &&
+      Number(item.quantity) === wantQuantity &&
+      // total cũng phải khớp: log 1/3 của Auto Mua mua hộ/khớp một phần không
+      // được coi là đơn ICON 1/1.
+      Number(item.total) === wantQuantity
+  );
 }
 
 // Gộp log mới nhất theo mã. Nếu bot lặp log (retry), log sau thắng; nhưng log
@@ -222,6 +245,7 @@ module.exports = {
   buildPurchaseLines,
   selectRandomIconPlayers,
   parsePurchaseSuccesses,
+  filterIconPurchaseSuccesses,
   mergePurchaseSuccesses,
   getLatestBotError,
   isOrderLimitError,

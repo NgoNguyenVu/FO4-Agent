@@ -29,7 +29,10 @@
     "purchaseTimeoutSeconds": 180,
     "ttcnTimeoutSeconds": 60,
     "batchIntervalSeconds": 2,
+    "continuous": true,
+    "slotPollSeconds": 15,
     "maxBatchesPerRun": 1,
-    "captureTtcnBaseline": true
+    "captureTtcnBaseline": true,
+    "maxTaskSlots": 3
   }
 }

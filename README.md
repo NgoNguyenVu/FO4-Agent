@@ -29,6 +29,12 @@ Both the Web K `@username` hash and the Web A numeric chat ID
 - ICON favorites: one random code per `/starticon`, grade +1, quantity 1; cancel
   orders placed at position > 5 or when the position is unknown (including E004)
   through `Auto Mua Phôi` -> `Gỡ cầu thủ TTCN`
+- ICON task slots: `iconBuy.maxTaskSlots` (3). The agent counts running `MUA`
+  tasks from the `/stop` baseline and only places a new ICON task while slots
+  remain. With a manual task using 1/3, `/starticon` uses the remaining 2/3.
+- ICON purchase wait: `iconBuy.purchaseTimeoutSeconds` (180 seconds). If the bot
+  has not logged a placed order by then, the new ICON task is stopped (only that
+  task) and TTCN is checked once more before the session ends.
 - Seasons and upgrade-grade selections: left as selected in the mini-app
 
 Each new cycle uses the configured maximum quantity. The agent does not impose
@@ -75,15 +81,25 @@ of treating the missing mini-app as a slow load.
    `/startmua` runs only Auto Mua Phôi, `/startnang` runs only Auto Nâng Cấp
    (icon targets one by one until none remain),
    `/starticon` buys only ICON players from the live
-   `Tra cứu mã cầu thủ offline` favorites list (up to 3 unique codes per batch,
-   +1/quantity 1, re-runs the lookup every batch, and cancels orders whose
-   `Vị trí mua` is greater than 5 through `Auto Mua Phôi` -> `Gỡ cầu thủ TTCN`),
-   `/stopagent` stops only the
-   Auto Mua/Auto Nâng worker owned by this agent, `/resetagent` immediately returns the
+   `Tra cứu mã cầu thủ offline` favorites list (random codes, +1/quantity 1,
+   re-runs the lookup every cycle). It reads `/stop` to count running `MUA`
+   tasks, treats `E003`/no-running as an empty baseline, and buys enough players
+   to fill the bot's 3 buy slots (for example 1/3 running -> buy 2 more). Orders
+   whose `Vị trí mua` is greater than 5 or unknown are canceled through
+   `Auto Mua Phôi` -> `Gỡ cầu thủ TTCN`; canceled slots are refilled in the next
+   cycle. It runs in the background and can run at the same time as
+   `/startagent`, `/startmua`, or `/startnang` without changing their mode,
+   `/stopagent` stops the
+   Auto Mua/Auto Nâng worker owned by this agent and aborts the background ICON
+   session, `/resetagent` immediately returns the
    agent to idle, clears its phase state, reopens Telegram Web and restores
-   monitoring without stopping a bot worker. `/stop` is used only
-   to inspect worker status;
-   the agent never selects an option from its stop menu. Worker chức năng khác
+   monitoring without stopping a bot worker. `/stop` is used only to inspect
+   worker status; the main buy/upgrade flow never selects an option from its
+   stop menu. The background ICON session may click the button of each new
+   `THƯỜNG • MUA` task that matches its own code/grade/quantity, to clean up
+   price-watching tasks it created or to free a slot after canceling an order;
+   it never clicks `Dừng tất cả` and never stops a task that existed in its
+   baseline. Worker chức năng khác
    của bot được phép chạy song song; agent không dò để chặn hoặc gửi lệnh dừng
    tới các worker đó. Auto Mua Phôi và Auto Nâng Cấp trong cùng flow agent vẫn
    chạy theo phase riêng để không tự mở chồng hai worker của agent.
@@ -148,10 +164,15 @@ of treating the missing mini-app as a slow load.
    command at the end if Telegram replaces the text snapshot. It must log that
    it is ready before a new command is sent. The agent process must already be running on the PC;
    Telegram cannot launch it after it has exited.
-5. On `/startagent`, `/startmua`, `/startnang`, or `/starticon`, the agent sends
-   `/stop` only
-   to inspect Auto Mua status. It never clicks a stop-menu option or uses
-   `/stop` to stop a worker. Worker chức năng khác đang chạy không làm agent
+5. On `/startagent`, `/startmua`, or `/startnang`, the agent sends
+   `/stop` only to inspect Auto Mua status. The main flow never clicks a
+   stop-menu option or uses `/stop` to stop a worker. The only exception is the
+   background `/starticon` cleanup: after its purchase wait times out, is
+   aborted, errors, or an order was canceled, it may stop each new
+   `THƯỜNG • MUA` task that matches its own code/grade/quantity and is absent
+   from its baseline. It never clicks `Dừng tất cả`, and it does not stop a task
+   that was already running. Worker
+   chức năng khác đang chạy không làm agent
    chuyển idle hoặc gửi lệnh dừng. When `/stopagent` is sent while idle, it
    sends `/stopauto` only if Auto Mua is confirmed running; it never sends
    `/stopnc` to a worker không do agent quản lý.
@@ -283,18 +304,47 @@ waits for a fresh `/startagent` instead of starting another cycle.
 
 ## Vòng `/starticon` (ICON yêu thích)
 
-- Mỗi lần `/starticon` luôn bấm lại `Tra cứu mã cầu thủ offline` để lấy danh
-  sách yêu thích hiện tại, chỉ giữ mùa ICON/ICONTM/ICONS MATCH/TKI và bỏ trùng
-  theo mã 9 số.
-- Chọn ngẫu nhiên 1 mã, gửi `Chèn Member Thường` -> `Mua cầu thủ` với dòng
-  `<Mã> 1 1`. Không chạy vòng lặp: xong 1 lượt là về idle, lần gọi sau random
-  lại từ đầu.
-- Đọc log `Đã đặt mua thành công ... Vị trí mua: N`; nếu `N > 5` **hoặc không
-  lấy được vị trí** (kể cả `E004`), mở `Auto Mua Phôi` -> `Gỡ cầu thủ TTCN`,
-  chờ danh sách tải xong, chọn đúng đơn mới (đối chiếu `data-orderid` baseline)
-  rồi bấm `Hủy`. Chỉ giữ đơn khi biết chắc `N <= 5`.
-- Gặp lỗi, hoặc nhận `/stopagent` thì phiên dừng. Chế độ này không gửi `/stop`,
-  không dừng worker Auto Mua/Auto Nâng và không bị các chế độ kia dừng theo.
+- Mỗi vòng `/starticon` luôn bấm lại `Tra cứu mã cầu thủ offline` để lấy danh
+  sách yêu thích hiện tại, chỉ giữ mùa ICON thuần (không tính ICONTM/ICONS MATCH/
+  TKI) và bỏ trùng theo mã 9 số.
+- Trước khi mua, agent đọc menu `/stop` để đếm task `MUA` đang chạy. Phản hồi
+  `E003` / `Hiện không có lệnh nào đang chạy` là baseline rỗng hợp lệ (0 slot),
+  không phải lỗi đọc menu. Số mã cần mua = `maxTaskSlots` (mặc định 3) trừ số
+  task `MUA` đang chạy, tối đa 3 mã mỗi lượt. Ví dụ đang có 1/3 task thì mua bù
+  2 mã để đủ 3/3.
+- Chọn ngẫu nhiên các mã chưa có task chạy, gửi `Chèn Member Thường` ->
+  `Mua cầu thủ` với các dòng `<Mã> 1 1`. Trước khi gửi, agent chụp baseline menu
+  `/stop` (chờ tối đa `iconBuy.menuTimeoutSeconds`, mặc định 45 giây) và baseline
+  TTCN. Nếu hết thời gian chờ, nhận `/stopagent` hoặc lỗi sau khi đã gửi lệnh,
+  agent chỉ bấm đúng task `THƯỜNG • MUA` mới khớp mã + grade + quantity (không
+  bấm nút dừng toàn bộ, không đụng task có trong baseline) rồi kiểm tra TTCN để
+  hủy đơn vừa xuất hiện. Nếu không đọc được baseline menu `/stop`, phiên
+  **không đặt mua** và báo lỗi `no-task-baseline`; nếu không đọc được menu lúc
+  dọn task, phiên báo lỗi cleanup thay vì coi như đã sạch.
+- Sau khi hủy đơn vị trí xấu, agent dừng đúng task của các mã vừa hủy để nhả
+  slot rồi lặp lại vòng mua bù. Khi đang đủ 3/3 slot, phiên chờ
+  `iconBuy.slotPollSeconds` (mặc định 15 giây) rồi kiểm tra `/stop` lại; task
+  nào xong/hủy sẽ được mua bù. Đặt `iconBuy.continuous: false` để quay lại hành
+  vi one-shot cũ (dừng sau `maxBatchesPerRun`).
+- `/starticon` chạy nền và **không đổi mode** của luồng mua/nâng. Có thể gửi
+  `/starticon` trong lúc `/startagent`, `/startmua` hoặc `/startnang` đang chạy;
+  hai luồng dùng chung page Telegram nhưng được tuần tự hóa các thao tác UI
+  (composer, menu, mở/đóng mini-app) bằng một khóa chung. Trong lúc một luồng
+  chỉ đọc chat để chờ bot, khóa được nhả để luồng còn lại chạy.
+- Chỉ một phiên ICON chạy tại một thời điểm. Nếu gửi `/starticon` khi phiên
+  trước chưa xong, lệnh mới bị bỏ qua để tránh đặt trùng.
+- Đọc log `Đã đặt mua thành công ... Vị trí mua: N`; chỉ nhận log khớp đúng
+  mã + grade + số lượng của phiên ICON (`1/1`), để log của Auto Mua đang chạy
+  song song với cùng mã nhưng khác grade/số lượng không bị xử lý nhầm. Nếu
+  `N > 5` **hoặc không lấy được vị trí** (kể cả `E004`), mở `Auto Mua Phôi` ->
+  `Gỡ cầu thủ TTCN`, chờ danh sách tải xong, chọn đúng đơn mới (đối chiếu
+  `data-orderid` baseline) rồi bấm `Hủy`. Chỉ giữ đơn khi biết chắc `N <= 5`.
+- Gặp lỗi, hoặc nhận `/stopagent`/`/resetagent` thì phiên ICON dừng ở bước an
+  toàn kế tiếp; nếu đã đặt đơn ở vị trí xấu, nó vẫn cố hủy qua TTCN trước khi
+  kết thúc. Chế độ này chỉ gửi `/stop` để đọc menu và bấm đúng task
+  `THƯỜNG • MUA` mới của chính nó; không bấm `Dừng tất cả`, không dừng worker
+  Auto Mua/Auto Nâng có sẵn. `/stopagent` dừng cả luồng mua/nâng chính và phiên
+  ICON nền.
 
 ## Recovery chuẩn
 
@@ -388,12 +438,20 @@ features and one thin coordinator:
     chat trimming cannot hide lookup results or purchase logs.
   - `favorites.js`: re-runs the offline lookup and reads only fresh results.
   - `order.js`: `Chèn Member Thường` -> `Mua cầu thủ` and purchase-result waits.
+    Releases the shared UI lock while waiting for chat results and marks errors
+    that happened after the purchase message was sent.
+  - `tasks.js`: reads the bot `/stop` menu, baselines running tasks, and stops
+    only the new `THƯỜNG • MUA` task created by the current icon session.
   - `ttcn.js`: Auto Mua mini-app, TTCN tab, baseline, and cancel actions.
-  - `runner.js`: one `/starticon` session and position-based cancellation.
+  - `runner.js`: one `/starticon` session, UI-lock boundaries, and
+    position-based cancellation.
   - `index.js`: public API of the feature.
+- `features/icon-session.js`: owns the background `/starticon` one-shot, rejects
+  duplicate runs, forwards abort from `/stopagent`/`/resetagent`, and never
+  changes the main buy/upgrade mode.
 - `features/controller.js`: Telegram session, command queue, mode selection
-  (`master` / `buy` / `nang` / `icon`), and the only code that coordinates
-  features. Feature trees never require each other.
+  (`master` / `buy` / `nang`), background ICON session, and the only code that
+  coordinates features. Feature trees never require each other.
 
 Shared infrastructure lives outside the features:
 
@@ -405,6 +463,8 @@ Shared infrastructure lives outside the features:
 - `lib/chat-runtime.js`: shared observer/tracker wiring and orphan-tail
   verification.
 - `lib/chat-state.js`: shared `page -> chat tracker` WeakMap.
+- `lib/ui-lock.js`: FIFO mutex shared by the main buy/upgrade flow and the
+  background ICON session for composer/menu/mini-app actions.
 - `lib/text-utils.js`: fresh-text extraction, command matching, and text scans.
 - `lib/bot-patterns.js`: bot message patterns and timing constants.
 - `lib/bot-signals.js`: shared E006 and rate-limit detection.
