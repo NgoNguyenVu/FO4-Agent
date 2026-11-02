@@ -6,3 +6,9 @@ build/
 coverage/
 playwright-report/
 test-results/
+
+# Debug output can contain account, order, or chat data.
+debug/*.png
+debug/*.html
+debug/*.json
+debug/*.log

@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node agent.js",
     "check": "node --check agent.js && node --test",
-    "test": "node --test"
+    "test": "node --test",
+    "scan:secrets": "node scripts/check-secrets.js",
+    "scan:history": "node scripts/check-secrets.js --history"
   },
   "dependencies": {
     "playwright": "^1.56.1"
