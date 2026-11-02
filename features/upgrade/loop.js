@@ -101,48 +101,61 @@ async function settleUpgradeOutcome(outcome, target, spec, page, rl) {
   return { action: "continue", outcome, target };
 }
 
-async function runSingleUpgrade(page, rl, blockedTargetIds = new Set()) {
-  const spec = getUpgradeSpec();
-  const adopted = getExistingUpgradeRun(chatTextReaders.get(page).snapshot().text);
-  if (adopted) {
-    log("Đã có worker Nâng cấp đang chạy; chờ luồng này thay vì mở mới.");
-    const outcome = await waitForUpgradeCompletion(page, adopted.baseline, null);
-    const settled = await settleUpgradeOutcome(outcome, null, spec, page, rl);
+async function runSingleUpgrade(page, rl, blockedTargetIds = new Set(), ui = null) {
+  if (ui) await ui.acquire();
+  try {
+    const spec = getUpgradeSpec();
+    const adopted = getExistingUpgradeRun(chatTextReaders.get(page).snapshot().text);
+    if (adopted) {
+      log("Đã có worker Nâng cấp đang chạy; chờ luồng này thay vì mở mới.");
+      // Chờ bot là thao tác chỉ đọc: nhả khóa UI để phiên ICON nền có thể chạy.
+      if (ui) ui.release();
+      let outcome;
+      try {
+        outcome = await waitForUpgradeCompletion(page, adopted.baseline, null, null, ui);
+      } finally {
+        if (ui) await ui.acquire();
+      }
+      const settled = await settleUpgradeOutcome(outcome, null, spec, page, rl);
+      await closeMiniApp(page).catch(() => {});
+      return settled;
+    }
+    let result;
+    try {
+      result = await runUpgradeOnce({
+        page,
+        rl,
+        spec,
+        targetId: null,
+        excludedTargetIds: blockedTargetIds,
+        ui
+      });
+    } catch (error) {
+      if (error.code === "NO_UPGRADE_TARGETS" || /Không còn cầu thủ/.test(error.message || "")) {
+        await closeMiniApp(page).catch(() => {});
+        return { action: "no-targets" };
+      }
+      if (error.code === "NO_UPGRADE_MATERIALS") {
+        await closeMiniApp(page).catch(() => {});
+        log("Không còn phôi phù hợp để nâng cấp; dừng Auto Nâng và chờ lệnh mới.");
+        return { action: "no-materials" };
+      }
+      // Lỗi khác (spec sai, renderer treo, browser đóng...): đóng mini-app best-effort
+      // để lần khôi phục sau không bị iframe cũ che mất UI Telegram.
+      await closeMiniApp(page).catch(() => {});
+      throw error;
+    }
+    const settled = await settleUpgradeOutcome(result.outcome, result.target, spec, page, rl);
+    if (settled.action === "blocked-target" && settled.target?.id) {
+      blockedTargetIds.add(settled.target.id);
+    }
+    // Đóng mini-app sau MỌI lượt nâng (kể cả thành công) để lần mở target kế
+    // tiếp không bấm nhầm menu cũ hoặc bị iframe cũ che mất giao diện chat.
     await closeMiniApp(page).catch(() => {});
     return settled;
+  } finally {
+    if (ui) ui.release();
   }
-  let result;
-  try {
-    result = await runUpgradeOnce({
-      page,
-      rl,
-      spec,
-      targetId: null,
-      excludedTargetIds: blockedTargetIds
-    });
-  } catch (error) {
-    if (error.code === "NO_UPGRADE_TARGETS" || /Không còn cầu thủ/.test(error.message || "")) {
-      await closeMiniApp(page).catch(() => {});
-      return { action: "no-targets" };
-    }
-    if (error.code === "NO_UPGRADE_MATERIALS") {
-      await closeMiniApp(page).catch(() => {});
-      log("Không còn phôi phù hợp để nâng cấp; dừng Auto Nâng và chờ lệnh mới.");
-      return { action: "no-materials" };
-    }
-    // Lỗi khác (spec sai, renderer treo, browser đóng...): đóng mini-app best-effort
-    // để lần khôi phục sau không bị iframe cũ che mất UI Telegram.
-    await closeMiniApp(page).catch(() => {});
-    throw error;
-  }
-  const settled = await settleUpgradeOutcome(result.outcome, result.target, spec, page, rl);
-  if (settled.action === "blocked-target" && settled.target?.id) {
-    blockedTargetIds.add(settled.target.id);
-  }
-  // Đóng mini-app sau MỌI lượt nâng (kể cả thành công) để lần mở target kế
-  // tiếp không bấm nhầm menu cũ hoặc bị iframe cũ che mất giao diện chat.
-  await closeMiniApp(page).catch(() => {});
-  return settled;
 }
 
 // Có nên mua tiếp sau 1 lượt nâng xong? ĐÚNG khi kho đã thay đổi (đạt target,
@@ -172,12 +185,12 @@ function decideMasterUpgradePhase(action) {
 // - Hết target khả thi (kể cả đã blacklist): quay lại mua để lấy thêm phôi;
 //   blacklist chỉ có hiệu lực trong 1 phase nên phase sau thử lại từ đầu.
 // - Không tiến triển/không đổi kho: dừng để tránh vòng lặp vô ích.
-async function pivotMasterToUpgrade(page, rl, runUpgrade = runSingleUpgrade, logFn = log) {
+async function pivotMasterToUpgrade(page, rl, runUpgrade = runSingleUpgrade, logFn = log, ui = null) {
   logFn("Kho/TTCN đầy; vòng tổng chuyển sang phase nâng liên tục cho tới khi hết phôi.");
   let upgradedTargets = 0;
   const blockedTargetIds = new Set();
   while (true) {
-    const up = await runUpgrade(page, rl, blockedTargetIds);
+    const up = await runUpgrade(page, rl, blockedTargetIds, ui);
     if (up.action === "continue") {
       if (up.mode && up.mode !== "master") {
         logFn(`Đã nhận lệnh chuyển sang chế độ ${up.mode} trong lúc dừng nâng cấp.`);

@@ -169,3 +169,58 @@ test("secret scanner passes in history mode for a clean history", (t) => {
 
   expectClean(runScanner(dir, ["--history"]));
 });
+
+test("secret scanner fails in staged mode for a staged secret deleted from the working tree", (t) => {
+  const dir = createTempRepo(t);
+  const host = "myapp" + ".ngrok" + ".io";
+  writeFile(dir, "src/tunnel.js", `const host = "${host}";\n`);
+  git(dir, ["add", "src/tunnel.js"]);
+  fs.rmSync(path.join(dir, "src/tunnel.js"), { force: true });
+
+  expectFinding(runScanner(dir, ["--staged"]), "internal FO4 endpoint");
+
+  const workingTreeResult = runScanner(dir, []);
+  expectClean(workingTreeResult);
+  assert.ok(workingTreeResult.stdout.includes("Secret scan passed (working tree)."));
+});
+
+test("secret scanner fails in staged mode for a staged AWS key overwritten in the working tree", (t) => {
+  const dir = createTempRepo(t);
+  const cleanContent = "const awsKeyId = null;\n";
+  writeFile(dir, "src/config.js", cleanContent);
+  commitAll(dir, "init");
+
+  const awsKeyId = "AKIA" + "ABCDEFGHIJKLMNOP";
+  writeFile(dir, "src/config.js", `const awsKeyId = "${awsKeyId}";\n`);
+  git(dir, ["add", "src/config.js"]);
+  writeFile(dir, "src/config.js", cleanContent);
+
+  expectFinding(runScanner(dir, ["--staged"]), "AWS access key");
+});
+
+test("secret scanner passes in staged mode for a clean staged file", (t) => {
+  const dir = createTempRepo(t);
+  writeFile(dir, "src/app.js", "console.log('clean staged file');\n");
+  git(dir, ["add", "src/app.js"]);
+
+  const result = runScanner(dir, ["--staged"]);
+  expectClean(result);
+  assert.ok(result.stdout.includes("Secret scan passed (staged index)."));
+});
+
+test("secret scanner skips staged binary files containing NUL bytes", (t) => {
+  const dir = createTempRepo(t);
+  writeFile(dir, "assets/logo.bin", Buffer.from([0, 0x50, 0x4b, 0x03, 0]));
+  git(dir, ["add", "assets/logo.bin"]);
+
+  expectClean(runScanner(dir, ["--staged"]));
+});
+
+test("secret scanner passes in staged mode when a file is deleted from the index", (t) => {
+  const dir = createTempRepo(t);
+  writeFile(dir, "src/app.js", "console.log('clean file');\n");
+  commitAll(dir, "init");
+  git(dir, ["rm", "src/app.js"]);
+
+  expectClean(runScanner(dir, ["--staged"]));
+});

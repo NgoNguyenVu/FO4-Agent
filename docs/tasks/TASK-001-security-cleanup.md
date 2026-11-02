@@ -88,38 +88,38 @@ Không thuộc phạm vi:
 
 - **Verdict:** **REJECTED** ngày 2026-10-31.
 - **Đã đạt:** 174/174 test pass tại thời điểm review; `scan:secrets` pass; artifact đã rời working tree; docs đã redact; không phát hiện race condition/architecture violation mới.
-- **Cập nhật 2026-11-01:** TASK-024 đã rewrite local — new HEAD `a4b7a25`, `scan:history` pass **0 finding**, 11 artifact đã xóa khỏi mọi commit local; `npm run check` **177/177**. Remote và fresh clone vẫn chờ TASK-026.
+- **Cập nhật 2026-11-01:** TASK-024 đã rewrite local — new HEAD `a4b7a25`, `scan:history` pass **0 finding**, 11 artifact đã xóa khỏi mọi commit local; `npm run check` **177/177**. **2026-11-02:** remote và fresh clone đã xác minh tại `f22cf96`; `npm run check` local **190/190**, fresh clone **188/190** (TASK-007).
 - **Chưa đạt:** remote còn artifact; credential chưa rotate; chưa force-push/re-clone; CI chưa scan history; thiếu test scanner; scanner chưa đọc staged blob; deletion chưa được commit/fresh-clone verify; trạng thái docs chưa đóng hoàn toàn.
 
 ### 7.2 Map blocker → remediation task
 
 | Blocker | Mức độ | Nội dung | Task |
 |---|---|---|---|
-| B1 | Critical | Git history còn artifact — **local đã sạch, remote chưa** | `TASK-024` |
-| B2 | Critical | Credential chưa rotate/revoke | `TASK-025` |
-| B3 | High | Chưa force-push, re-clone, fresh-clone verification | `TASK-026` |
-| B4 | High | Patch không cô lập; TASK-007 chưa xong — **đã cô lập, 7 file staged** | `TASK-027` |
-| B5 | High | CI chưa scan history | `TASK-028` |
-| B6 | High | Thiếu test cho secret scanner — **DONE**; task remediation `TASK-033` **READY_FOR_COMMIT** | `TASK-029` |
-| B7 | Medium | Scanner đọc working tree thay vì staged blob | `TASK-030` |
-| B8 | Medium | Deletion chưa stage — **đã vào lịch sử rewrite; chờ commit/fresh clone** | `TASK-031` |
-| B9 | Low | Task/incident/backlog chưa cập nhật trạng thái | `TASK-032` |
+| B1 | Critical | Git history còn artifact — **DONE**, remote sạch tại `f22cf96` | `TASK-024` |
+| B2 | Critical | Credential chưa rotate/revoke — **DONE**, Accepted Risk Approved (no active credential) | `TASK-025` |
+| B3 | High | Chưa force-push, re-clone, fresh-clone verification — **DONE** | `TASK-026` |
+| B4 | High | Patch không cô lập — **DONE** (`261e9b7`, 7 file) | `TASK-027` |
+| B5 | High | CI chưa scan history — **READY** | `TASK-028` |
+| B6 | High | Thiếu test cho secret scanner — **DONE** (qua `TASK-033`, `f22cf96`) | `TASK-029` |
+| B7 | Medium | Scanner đọc working tree thay vì staged blob — **READY** | `TASK-030` |
+| B8 | Medium | Deletion chưa commit/fresh-clone verify — **DONE** | `TASK-031` |
+| B9 | Low | Task/incident/backlog chưa cập nhật — **BLOCKED** (B5, B7) | `TASK-032` |
 
-**Thứ tự thực thi:** `TASK-027` → `TASK-024` → `TASK-025` → `TASK-026` → `TASK-028` → `TASK-029` → `TASK-033` → `TASK-030` → `TASK-031` → `TASK-032`.
+**Thứ tự còn lại:** `TASK-028` → `TASK-030` → `TASK-032` → TASK-001 re-review.
 
-**Gate:** không commit, push, merge hoặc chạy live cho đến khi tất cả blocker đóng và có security sign-off.
+**Gate:** commit chỉ khi task = `COMMIT_AUTHORIZED`; không merge/release/live cho đến khi tất cả blocker đóng và có security sign-off.
 
 ### 7.3 Điều kiện re-review
 
-1. TASK-027 freeze/isolate hoàn tất.
-2. TASK-024 rewrite history; `scan:history` pass 0 finding — **đạt local**; remote xác minh qua TASK-026.
-3. TASK-025 credential rotation có evidence.
-4. TASK-026 force-push/re-clone/fresh clone pass.
-5. TASK-028 CI history gate blocking.
-6. TASK-029 scanner tests pass — **DONE** (test suite hoàn thiện qua task remediation `TASK-033`, **READY_FOR_COMMIT**).
-7. TASK-030 staged-blob scan pass.
-8. TASK-031 deletion được stage/commit.
-9. TASK-032 evidence và trạng thái cập nhật.
+1. TASK-027 freeze/isolate hoàn tất — **DONE** (`261e9b7`).
+2. TASK-024 rewrite history; `scan:history` pass 0 finding — **đạt local, remote và fresh clone** tại `f22cf96`.
+3. TASK-025 credential decision có evidence — **Accepted Risk Approved** (no active credential).
+4. TASK-026 force-push/re-clone/fresh clone pass — **DONE** (`42d3555...f22cf96`).
+5. TASK-028 CI history gate blocking — **READY**.
+6. TASK-029 scanner tests pass — **DONE** (qua `TASK-033`, `f22cf96`).
+7. TASK-030 staged-blob scan pass — **READY**.
+8. TASK-031 deletion được stage/commit — **DONE**.
+9. TASK-032 evidence và trạng thái cập nhật — **BLOCKED** (chờ B5, B7).
 
 ## 8. Cortex plan quality
 

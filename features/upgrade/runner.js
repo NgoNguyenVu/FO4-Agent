@@ -112,7 +112,7 @@ async function waitForUpgradeStartAck(page, baseline) {
   }
 }
 
-async function waitForUpgradeCompletion(page, baseline, baselineText = null, timeoutMs = null) {
+async function waitForUpgradeCompletion(page, baseline, baselineText = null, timeoutMs = null, ui = null) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
   const spec = getUpgradeSpec();
@@ -168,88 +168,95 @@ async function waitForUpgradeCompletion(page, baseline, baselineText = null, tim
     // coi target đang khóa/training là "đã hết target".
     if (Date.now() >= nextTargetCheckAt) {
       nextTargetCheckAt = Date.now() + spec.targetCheckIntervalSeconds * 1_000;
-      let frameInfo = null;
+      // Kiểm tra mini-app là thao tác UI: chỉ chiếm khóa trong đoạn này để
+      // phiên ICON nền vẫn chạy được trong phần lớn thời gian chờ nâng cấp.
+      if (ui) await ui.acquire();
       try {
-        frameInfo = await inspectPaymentFrames(page);
-      } catch (error) {
-        if (isBrowserSessionClosed(error, page)) throw error;
-      }
-      if (!(frameInfo?.count > 0 && frameInfo.visible) && !autoOpenAttempted) {
-        autoOpenAttempted = true;
-        log(
-          "Mini-app nâng cấp đã đóng sau khi bắt đầu; thử mở lại bằng menu còn trong chat " +
-            "(không gửi /tn) để kiểm tra target."
-        );
-        let opened = null;
+        let frameInfo = null;
         try {
-          opened = await withTimeout(
-            openUpgradeFrameForCheck(page),
-            config.upgradeFrameTimeoutSeconds * 1_000 + 30_000,
-            "mở lại mini-app nâng cấp để kiểm tra target"
-          );
+          frameInfo = await inspectPaymentFrames(page);
         } catch (error) {
           if (isBrowserSessionClosed(error, page)) throw error;
-          log(`Không mở lại được mini-app nâng cấp để kiểm tra: ${error.message}`);
         }
-        if (opened) {
-          frameInfo = { count: 1, visible: true };
-          log("Đã mở lại mini-app nâng cấp bằng menu cũ; đọc trạng thái target.");
-        } else {
-          log("Không thấy menu nâng cấp còn trong chat; không gửi /tn, tiếp tục chờ bot.");
-        }
-      }
-      if (frameInfo?.count > 0 && frameInfo.visible) {
-        const frame = getPaymentFrameLocator(page);
-        let availability = null;
-        try {
-          availability = await withTimeout(
-            inspectUpgradeTargetAvailability(frame, page, spec),
-            config.upgradeFrameTimeoutSeconds * 1_000 + 15_000,
-            "kiểm tra target còn lại trong mini-app"
+        if (!(frameInfo?.count > 0 && frameInfo.visible) && !autoOpenAttempted) {
+          autoOpenAttempted = true;
+          log(
+            "Mini-app nâng cấp đã đóng sau khi bắt đầu; thử mở lại bằng menu còn trong chat " +
+              "(không gửi /tn) để kiểm tra target."
           );
-        } catch (error) {
-          if (isBrowserSessionClosed(error, page)) throw error;
-          log(`Chưa kiểm tra được target còn lại trong mini-app: ${error.message}`);
-        }
-        if (availability?.status === "exhausted") {
-          const s = availability.summary;
-          if (!targetExhaustedAt) {
-            targetExhaustedAt = Date.now();
-            log(
-              `Mini-app nâng cấp tạm thời không còn icon target dưới +${spec.targetGrade} sau khi tải lại kho ` +
-                `(${s.total} thẻ: không badge ICON ${s.notIcon}, khóa ${s.locked}, ` +
-                `đã đạt +${spec.targetGrade} ${s.reachedTarget}, hợp lệ ${s.eligible}); ` +
-                `sẽ xác nhận lại sau ${Math.round(spec.targetCheckIntervalSeconds)} giây.`
+          let opened = null;
+          try {
+            opened = await withTimeout(
+              openUpgradeFrameForCheck(page),
+              config.upgradeFrameTimeoutSeconds * 1_000 + 30_000,
+              "mở lại mini-app nâng cấp để kiểm tra target"
             );
+          } catch (error) {
+            if (isBrowserSessionClosed(error, page)) throw error;
+            log(`Không mở lại được mini-app nâng cấp để kiểm tra: ${error.message}`);
+          }
+          if (opened) {
+            frameInfo = { count: 1, visible: true };
+            log("Đã mở lại mini-app nâng cấp bằng menu cũ; đọc trạng thái target.");
           } else {
-            log(
-              `Xác nhận lần 2: mini-app không còn icon target dưới +${spec.targetGrade} ` +
-                `(${s.total} thẻ: không badge ICON ${s.notIcon}, khóa ${s.locked}, ` +
-                `đã đạt +${spec.targetGrade} ${s.reachedTarget}, hợp lệ ${s.eligible}); ` +
-                "dừng chờ bot và về trạng thái chờ lệnh."
-            );
-            return { status: "targets-exhausted" };
-          }
-        } else {
-          targetExhaustedAt = 0;
-        }
-        if (availability?.status === "has-targets") {
-          const s = availability.summary;
-          const key = `has:${s.eligible}:${s.locked}:${s.reachedTarget}`;
-          if (key !== lastTargetCheckKey) {
-            lastTargetCheckKey = key;
-            log(
-              `Kiểm tra target trong mini-app: còn ${s.eligible} icon dưới +${spec.targetGrade} ` +
-                `(${s.total} thẻ, ${s.locked} khóa, ${s.reachedTarget} đã đạt target); tiếp tục chờ bot.`
-            );
-          }
-        } else if (availability) {
-          const key = `unknown:${availability.reason}`;
-          if (key !== lastTargetCheckKey) {
-            lastTargetCheckKey = key;
-            log(`Chưa kết luận được target còn lại trong mini-app (${availability.reason}); tiếp tục chờ bot.`);
+            log("Không thấy menu nâng cấp còn trong chat; không gửi /tn, tiếp tục chờ bot.");
           }
         }
+        if (frameInfo?.count > 0 && frameInfo.visible) {
+          const frame = getPaymentFrameLocator(page);
+          let availability = null;
+          try {
+            availability = await withTimeout(
+              inspectUpgradeTargetAvailability(frame, page, spec),
+              config.upgradeFrameTimeoutSeconds * 1_000 + 15_000,
+              "kiểm tra target còn lại trong mini-app"
+            );
+          } catch (error) {
+            if (isBrowserSessionClosed(error, page)) throw error;
+            log(`Chưa kiểm tra được target còn lại trong mini-app: ${error.message}`);
+          }
+          if (availability?.status === "exhausted") {
+            const s = availability.summary;
+            if (!targetExhaustedAt) {
+              targetExhaustedAt = Date.now();
+              log(
+                `Mini-app nâng cấp tạm thời không còn icon target dưới +${spec.targetGrade} sau khi tải lại kho ` +
+                  `(${s.total} thẻ: không badge ICON ${s.notIcon}, khóa ${s.locked}, ` +
+                  `đã đạt +${spec.targetGrade} ${s.reachedTarget}, hợp lệ ${s.eligible}); ` +
+                  `sẽ xác nhận lại sau ${Math.round(spec.targetCheckIntervalSeconds)} giây.`
+              );
+            } else {
+              log(
+                `Xác nhận lần 2: mini-app không còn icon target dưới +${spec.targetGrade} ` +
+                  `(${s.total} thẻ: không badge ICON ${s.notIcon}, khóa ${s.locked}, ` +
+                  `đã đạt +${spec.targetGrade} ${s.reachedTarget}, hợp lệ ${s.eligible}); ` +
+                  "dừng chờ bot và về trạng thái chờ lệnh."
+              );
+              return { status: "targets-exhausted" };
+            }
+          } else {
+            targetExhaustedAt = 0;
+          }
+          if (availability?.status === "has-targets") {
+            const s = availability.summary;
+            const key = `has:${s.eligible}:${s.locked}:${s.reachedTarget}`;
+            if (key !== lastTargetCheckKey) {
+              lastTargetCheckKey = key;
+              log(
+                `Kiểm tra target trong mini-app: còn ${s.eligible} icon dưới +${spec.targetGrade} ` +
+                  `(${s.total} thẻ, ${s.locked} khóa, ${s.reachedTarget} đã đạt target); tiếp tục chờ bot.`
+              );
+            }
+          } else if (availability) {
+            const key = `unknown:${availability.reason}`;
+            if (key !== lastTargetCheckKey) {
+              lastTargetCheckKey = key;
+              log(`Chưa kết luận được target còn lại trong mini-app (${availability.reason}); tiếp tục chờ bot.`);
+            }
+          }
+        }
+      } finally {
+        if (ui) ui.release();
       }
     }
     const progress = latestUpgradeProgress(fresh || "");
@@ -301,6 +308,11 @@ async function stopUpgradeWorker(page, rl) {
   let restartCommand = null;
   while (Date.now() < deadline) {
     for (const command of reader.takeCommandsMatching(["stopagent", ...CONTROL_START_COMMANDS])) {
+      if (command === "starticon") {
+        // /starticon chạy nền, không phải mode của luồng mua/nâng chính.
+        log("Đã nhận /starticon trong lúc dừng nâng cấp; phiên ICON chạy nền, giữ nguyên mode.");
+        continue;
+      }
       if (CONTROL_START_COMMANDS.includes(command)) {
         restartCommand = command;
         log(`Đã nhận /${command} trong lúc dừng nâng cấp; sẽ chạy tiếp sau khi xác nhận.`);
@@ -356,7 +368,8 @@ async function runUpgradeOnce({
   targetId = null,
   excludedTargetIds = new Set(),
   timeoutMs = null,
-  dryRun = false
+  dryRun = false,
+  ui = null
 }) {
   validateUpgradeConfig();
   // Mỗi phase có bound riêng (chỉ phòng renderer treo; thao tác khỏe mạnh xong
@@ -449,29 +462,42 @@ async function runUpgradeOnce({
   };
   await withTimeout(pressUpgradeStart(frame), 2 * 60_000, "bấm bắt đầu nâng cấp");
   await withTimeout(dismissGoodLuckPopup(page), 30_000, "đóng popup chúc may mắn").catch(() => false);
-  await waitForUpgradeStartAck(page, ackBaseline);
-  const acknowledgedText = reader.snapshot().text;
-  const immediateOutcome = getUpgradeOutcomeFromFresh(
-    getFreshSince(ackBaseline.text, acknowledgedText),
-    acknowledgedText
-  );
-  const ackTerminalChanged = hasNewUpgradeTerminal(acknowledgedText, ackBaseline);
-  const snapshotOutcome =
-    immediateOutcome ||
-    (ackTerminalChanged || countUpgradeTerminals(acknowledgedText) > ackBaseline.terminals
-      ? (() => {
-          const summary = parseUpgradeSummary(acknowledgedText);
-          return summary ? { status: "completed", ...summary } : null;
-        })()
-      : null);
-  if (snapshotOutcome) {
-    log("Bot đã gửi completion ngay sau khi bắt đầu nâng; ghi nhận kết quả trực tiếp.");
-    return { outcome: snapshotOutcome, target, phoiCount };
+  // Từ đây chỉ chờ ack/kết quả trong chat. Nhả khóa UI để phiên ICON nền chạy;
+  // waitForUpgradeCompletion tự lấy khóa trong các lần kiểm tra mini-app.
+  if (ui) ui.release();
+  try {
+    await waitForUpgradeStartAck(page, ackBaseline);
+    const acknowledgedText = reader.snapshot().text;
+    const immediateOutcome = getUpgradeOutcomeFromFresh(
+      getFreshSince(ackBaseline.text, acknowledgedText),
+      acknowledgedText
+    );
+    const ackTerminalChanged = hasNewUpgradeTerminal(acknowledgedText, ackBaseline);
+    const snapshotOutcome =
+      immediateOutcome ||
+      (ackTerminalChanged || countUpgradeTerminals(acknowledgedText) > ackBaseline.terminals
+        ? (() => {
+            const summary = parseUpgradeSummary(acknowledgedText);
+            return summary ? { status: "completed", ...summary } : null;
+          })()
+        : null);
+    if (snapshotOutcome) {
+      log("Bot đã gửi completion ngay sau khi bắt đầu nâng; ghi nhận kết quả trực tiếp.");
+      return { outcome: snapshotOutcome, target, phoiCount };
+    }
+    const cycleBaseline = getUpgradeCycleBaseline(acknowledgedText);
+    log(`Đã bắt đầu nâng cấp ${target.name} lên +${spec.targetGrade}.`);
+    const outcome = await waitForUpgradeCompletion(
+      page,
+      cycleBaseline,
+      acknowledgedText,
+      timeoutMs,
+      ui
+    );
+    return { outcome, target, phoiCount };
+  } finally {
+    if (ui) await ui.acquire();
   }
-  const cycleBaseline = getUpgradeCycleBaseline(acknowledgedText);
-  log(`Đã bắt đầu nâng cấp ${target.name} lên +${spec.targetGrade}.`);
-  const outcome = await waitForUpgradeCompletion(page, cycleBaseline, acknowledgedText, timeoutMs);
-  return { outcome, target, phoiCount };
 }
 
 module.exports = {

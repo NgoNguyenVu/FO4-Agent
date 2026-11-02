@@ -8,6 +8,7 @@ const path = require("node:path");
 const ROOT = process.cwd();
 const SELF = path.relative(ROOT, __filename).replace(/\\/g, "/");
 const HISTORY = process.argv.includes("--history");
+const STAGED = process.argv.includes("--staged");
 
 const RULES = [
   {
@@ -93,7 +94,37 @@ function scanHistory() {
   return scanText(history, "git history");
 }
 
-const findings = HISTORY ? scanHistory() : scanWorkingTree();
+function scanStaged() {
+  const findings = [];
+  for (const file of listTrackedFiles()) {
+    if (file === SELF) continue;
+
+    if (ARTIFACT_RE.test(file)) {
+      findings.push({ where: file, rule: "tracked debug artifact" });
+      continue;
+    }
+
+    let buffer;
+    try {
+      buffer = execFileSync("git", ["show", `:${file}`], {
+        cwd: ROOT,
+        maxBuffer: 64 * 1024 * 1024
+      });
+    } catch {
+      continue;
+    }
+
+    if (buffer.includes(0)) continue;
+    findings.push(...scanText(buffer.toString("utf8"), file));
+  }
+  return findings;
+}
+
+const findings = HISTORY
+  ? scanHistory()
+  : STAGED
+    ? scanStaged()
+    : scanWorkingTree();
 
 if (findings.length) {
   console.error(`Secret scan failed: ${findings.length} finding(s)`);
@@ -102,5 +133,6 @@ if (findings.length) {
   }
   process.exitCode = 1;
 } else {
-  console.log(`Secret scan passed (${HISTORY ? "history" : "working tree"}).`);
+  const mode = HISTORY ? "history" : STAGED ? "staged index" : "working tree";
+  console.log(`Secret scan passed (${mode}).`);
 }
