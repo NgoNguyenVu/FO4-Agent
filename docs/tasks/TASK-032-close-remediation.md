@@ -7,7 +7,7 @@
 - **Effort:** S
 - **Dependency:** TASK-024 → TASK-031
 - **Blocks:** —
-- **Status:** **BLOCKED** — còn TASK-028 và TASK-030
+- **Status:** **READY** — TASK-030 đã DONE (`4d16d41`); còn evidence/sign-off và re-review TASK-001
 - **Owner đề xuất:** Engineering Manager + Security
 
 ## 1. Mục tiêu
