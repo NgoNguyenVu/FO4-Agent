@@ -6,10 +6,11 @@
 - **Risk:** High
 - **Effort:** M
 - **Dependency:** TASK-007
-- **Status:** **Blocked — REJECTED (2026-10-31)**
+- **Status:** **REMEDIATION_COMPLETE (2026-11-04)** — B1–B9 closed; **not Done**: pending Reviewer re-review + QA; CI/fresh-clone green blocked by `TASK-007`
 - **Owner đề xuất:** Security + Platform
 - **Review:** [`docs/reviews/TASK-001-review-2026-10-31.md`](../reviews/TASK-001-review-2026-10-31.md)
 - **Repo 2026-11-01:** local `main` tại `a4b7a25` sau rewrite; lịch sử local không còn `debug/trade-bulk.html`/ảnh debug; remote vẫn chứa artifact cho đến `TASK-026`. Patch TASK-001 staged **7 file**.
+- **Repo 2026-11-04:** local `main` `3b048b9` (4 commit chưa push: `7f9291b`, `412a8f0`, `4d16d41`, `3b048b9`); remote `main` `26a9d46`; `npm run check` local **198/198**; `scan:secrets`/`scan:staged` pass; `scan:history` local fail 1 finding (**F1**, `refs/agents/*`), fresh clone pass.
 
 ## 1. Mục tiêu
 
@@ -82,6 +83,8 @@ Không thuộc phạm vi:
 - `npm run check` pass.
 - Tất cả blocker B1–B9 đóng; `TASK-032` hoàn tất.
 
+> **Trạng thái 2026-11-04:** mục 1–8 và 10 đạt; mục 9 đạt **local 198/198** nhưng chưa đạt trên remote/fresh clone do `TASK-007`. TASK-032 **không** đánh dấu TASK-001 là Done; TASK-001 ở `REMEDIATION_COMPLETE — pending re-review + QA`.
+
 ## 7. Review và remediation
 
 ### 7.1 Kết quả review
@@ -89,7 +92,8 @@ Không thuộc phạm vi:
 - **Verdict:** **REJECTED** ngày 2026-10-31.
 - **Đã đạt:** 174/174 test pass tại thời điểm review; `scan:secrets` pass; artifact đã rời working tree; docs đã redact; không phát hiện race condition/architecture violation mới.
 - **Cập nhật 2026-11-01:** TASK-024 đã rewrite local — new HEAD `a4b7a25`, `scan:history` pass **0 finding**, 11 artifact đã xóa khỏi mọi commit local; `npm run check` **177/177**. **2026-11-02:** remote và fresh clone đã xác minh tại `f22cf96`; `npm run check` local **190/190**, fresh clone **188/190** (TASK-007).
-- **Chưa đạt:** remote còn artifact; credential chưa rotate; chưa force-push/re-clone; CI chưa scan history; thiếu test scanner; scanner chưa đọc staged blob; deletion chưa được commit/fresh-clone verify; trạng thái docs chưa đóng hoàn toàn.
+- **Cập nhật 2026-11-04:** B5 (`26a9d46`), B7 (`4d16d41` + core `7f9291b`) và B9 (TASK-032) đã đóng. `TASK-001` chuyển **REMEDIATION_COMPLETE — pending re-review + QA**; **không** đánh dấu Done. Local `npm run check` **198/198**; remote/fresh clone vẫn **188/190** do `TASK-007`.
+- **Còn lại (không thuộc B1–B9):** Reviewer re-review + QA; CI/fresh-clone xanh (blocked by `TASK-007`); residual F1/F2 (local secret hygiene).
 
 ### 7.2 Map blocker → remediation task
 
@@ -99,15 +103,15 @@ Không thuộc phạm vi:
 | B2 | Critical | Credential chưa rotate/revoke — **DONE**, Accepted Risk Approved (no active credential) | `TASK-025` |
 | B3 | High | Chưa force-push, re-clone, fresh-clone verification — **DONE** | `TASK-026` |
 | B4 | High | Patch không cô lập — **DONE** (`261e9b7`, 7 file) | `TASK-027` |
-| B5 | High | CI chưa scan history — **READY** | `TASK-028` |
+| B5 | High | CI chưa scan history — **DONE** (`26a9d46`; `fetch-depth: 0` + blocking `scan:history`) | `TASK-028` |
 | B6 | High | Thiếu test cho secret scanner — **DONE** (qua `TASK-033`, `f22cf96`) | `TASK-029` |
-| B7 | Medium | Scanner đọc working tree thay vì staged blob — **READY** | `TASK-030` |
+| B7 | Medium | Scanner đọc working tree thay vì staged blob — **DONE** (`4d16d41`; core `7f9291b`; 21/21 test) | `TASK-030` |
 | B8 | Medium | Deletion chưa commit/fresh-clone verify — **DONE** | `TASK-031` |
-| B9 | Low | Task/incident/backlog chưa cập nhật — **BLOCKED** (B5, B7) | `TASK-032` |
+| B9 | Low | Task/incident/backlog chưa cập nhật — **DONE** (TASK-032, evidence 2026-11-04; TASK-032 review/QA pending) | `TASK-032` |
 
-**Thứ tự còn lại:** `TASK-028` → `TASK-030` → `TASK-032` → TASK-001 re-review.
+**Thứ tự còn lại:** `TASK-001` re-review → QA → đóng `TASK-001`. `TASK-007` là external blocker duy nhất cho CI xanh.
 
-**Gate:** commit chỉ khi task = `COMMIT_AUTHORIZED`; không merge/release/live cho đến khi tất cả blocker đóng và có security sign-off.
+**Gate:** commit chỉ khi task = `COMMIT_AUTHORIZED`; không merge/release/live cho đến khi tất cả blocker đóng và có security sign-off. TASK-032 không merge/release/live.
 
 ### 7.3 Điều kiện re-review
 
@@ -115,11 +119,14 @@ Không thuộc phạm vi:
 2. TASK-024 rewrite history; `scan:history` pass 0 finding — **đạt local, remote và fresh clone** tại `f22cf96`.
 3. TASK-025 credential decision có evidence — **Accepted Risk Approved** (no active credential).
 4. TASK-026 force-push/re-clone/fresh clone pass — **DONE** (`42d3555...f22cf96`).
-5. TASK-028 CI history gate blocking — **READY**.
+5. TASK-028 CI history gate blocking — **DONE** (`26a9d46`).
 6. TASK-029 scanner tests pass — **DONE** (qua `TASK-033`, `f22cf96`).
-7. TASK-030 staged-blob scan pass — **READY**.
+7. TASK-030 staged-blob scan pass — **DONE** (`4d16d41`; review/QA 2026-11-04).
 8. TASK-031 deletion được stage/commit — **DONE**.
-9. TASK-032 evidence và trạng thái cập nhật — **BLOCKED** (chờ B5, B7).
+9. TASK-032 evidence và trạng thái cập nhật — **DONE** (evidence 2026-11-04; TASK-032 review/QA pending).
+10. CI/fresh-clone `npm run check` xanh — **BLOCKED by `TASK-007`** (remote/fresh clone `f22cf96` = 188/190; runtime fixes chưa được authorize/push).
+
+> Điều kiện 1–9 đã đạt. **Re-review chưa được thực hiện**; verdict vẫn REJECTED cho đến khi Reviewer ra verdict mới.
 
 ## 8. Cortex plan quality
 
@@ -128,3 +135,58 @@ Không thuộc phạm vi:
 - **Iteration 2:** **8.8/10 — APPROVED**.
 - **Điểm mạnh:** completeness 10/10, feasibility 9/10, ordering 9/10, impact clarity 9/10.
 - **Điểm cần theo dõi khi thực thi:** specificity 8/10 và testability 8/10 — phải giữ đúng command kiểm tra trong mục 4, không thay bằng kiểm tra thủ công.
+
+## 9. Remediation evidence — 2026-11-04
+
+### 9.1. Repo snapshot
+
+| Hạng mục | Giá trị |
+|---|---|
+| Local `main` | `3b048b9` |
+| Remote `main` | `26a9d46` |
+| Commit local chưa push | `7f9291b`, `412a8f0`, `4d16d41`, `3b048b9` |
+| `npm run check` local | 198/198 |
+| `scan:secrets` / `scan:staged` | pass |
+| `scan:history` local | fail 1 finding (F1 — `refs/agents/*`) |
+| Fresh clone từ local HEAD | 3 scan pass |
+
+### 9.2. Blocker → evidence
+
+| Blocker | Task | Bằng chứng | Trạng thái |
+|---|---|---|---|
+| B1 | TASK-024 | rewrite `a4b7a25`; remote `26a9d46`; `scan:history` 0 finding trên remote/fresh clone; `git log --all -- debug/trade-bulk.html` rỗng | DONE |
+| B2 | TASK-025 | authorization-2026-11-02 + risk-acceptance-2026-11-02 (no active credential) | DONE (accepted risk) |
+| B3 | TASK-026 | force-push `42d3555...f22cf96`; fresh clone sạch | DONE |
+| B4 | TASK-027 | `261e9b7`, đúng 7 file | DONE |
+| B5 | TASK-028 | `26a9d46`; `fetch-depth: 0` + `scan:history` blocking | DONE |
+| B6 | TASK-029/TASK-033 | `f22cf96`; 13/13 → 21/21 scanner test | DONE |
+| B7 | TASK-030 | `4d16d41` (+ core `7f9291b`); Reviewer APPROVED + QA PASS 2026-11-04 | DONE |
+| B8 | TASK-031 | deletion verified trong history + fresh clone | DONE |
+| B9 | TASK-032 | mục 9 này + sign-off 9.4 | DONE (evidence; TASK-032 review/QA pending) |
+
+### 9.3. Verification commands
+
+```text
+npm run check                 # 198/198
+npm run scan:secrets          # pass
+npm run scan:staged           # pass
+npm run scan:history          # local: 1 finding (F1); fresh clone: pass
+git log --all -- debug/trade-bulk.html   # rỗng
+git ls-files 'debug/*.html' 'debug/*.png' # rỗng
+```
+
+### 9.4. Security sign-off — remediation evidence
+
+- **Phạm vi:** xác nhận evidence B1–B9 đầy đủ, khớp repo; **không** phải phê duyệt production/live và **không** phải verdict review.
+- **Delivery attestation:** Engineering Manager (Company Executor) — evidence/docs khớp repo tại `3b048b9`; không overclaim TASK-001.
+- **Security attestation:** **APPROVED** bởi Security Owner **NgoNguyenVu** ngày **2026-11-04** — xem [`docs/authorizations/security-signoff-2026-11-04-task-032.md`](../authorizations/security-signoff-2026-11-04-task-032.md).
+- **Căn cứ:** [`authorization-2026-11-02`](../authorizations/authorization-2026-11-02.md) (TASK-025 Accepted Risk, TASK-026 force-push); [`risk-acceptance-2026-11-02`](../risk-acceptance-2026-11-02-security-remediation.md); TASK-030 review/QA; TASK-033 test; kết quả 2026-11-04.
+- **Owner Decision mới:** không cần cho phạm vi này.
+- **Chưa bao gồm:** TASK-001 `Done`, merge/release/live, TASK-007, F1/F2.
+
+### 9.5. Residual risk & follow-up
+
+- **F1:** local `refs/agents/*` chứa Bearer token → `scan:history` local fail; không có trong remote/fresh clone.
+- **F2:** `.mcp.json` untracked chứa key, chưa được ignore → cấm `git add -A`; cần ignore trước commit kế tiếp.
+- **TASK-007:** `AUTHORIZATION_REQUIRED`; `7f9291b` chứa runtime fixes chưa được authorize/push; là external blocker duy nhất cho CI xanh.
+- **Follow-up đề xuất:** `TASK-035 (proposed)` — local secret hygiene (F1/F2). Không tạo file task trong TASK-032.

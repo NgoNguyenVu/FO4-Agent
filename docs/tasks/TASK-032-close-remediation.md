@@ -7,7 +7,7 @@
 - **Effort:** S
 - **Dependency:** TASK-024 → TASK-031
 - **Blocks:** —
-- **Status:** **READY** — TASK-030 đã DONE (`4d16d41`); còn evidence/sign-off và re-review TASK-001
+- **Status:** **REVIEW** — evidence/docs cập nhật 2026-11-04; chờ Reviewer/QA xác nhận. Không đánh dấu TASK-001 Done.
 - **Owner đề xuất:** Engineering Manager + Security
 
 ## 1. Mục tiêu
@@ -62,3 +62,12 @@ Cập nhật trạng thái TASK-001, incident note, backlog, roadmap và task bo
 - TASK-001 Done.
 - Backlog/roadmap/task board/incident nhất quán.
 - Security sign-off.
+
+## 8. Kết quả thực thi — 2026-11-04
+
+- Plan: [`docs/reviews/TASK-032-executor-plan-2026-11-04.md`](../reviews/TASK-032-executor-plan-2026-11-04.md)
+- Evidence: TASK-001 §9; review addendum 2026-11-04; incident verification 2026-11-04.
+- Kết quả: B1–B9 closed; TASK-001 `REMEDIATION_COMPLETE — pending re-review + QA`.
+- Sign-off: [`docs/authorizations/security-signoff-2026-11-04-task-032.md`](../authorizations/security-signoff-2026-11-04-task-032.md).
+- Commit: `<3b048b9>` (docs evidence + review + QA).
+- Trạng thái sau commit: `TASK-032` **DONE** (evidence recorded); TASK-001 **REMEDIATION_COMPLETE**; TASK-007 **AUTHORIZATION_REQUIRED**.

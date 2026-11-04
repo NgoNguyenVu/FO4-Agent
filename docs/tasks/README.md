@@ -1,6 +1,6 @@
 # Task Board — FO4-Agent
 
-- **Cập nhật:** 2026-11-02 (TASK-027/033 committed; TASK-026 force-push DONE; TASK-025 Accepted Risk; TASK-031 DONE; TASK-028/030 READY; TASK-007 AUTHORIZATION_REQUIRED)
+- **Cập nhật:** 2026-11-04 (TASK-032 evidence recorded — B1–B9 closed; TASK-001 REMEDIATION_COMPLETE, chờ re-review + QA; TASK-007 AUTHORIZATION_REQUIRED)
 - **Người lập:** Planner Agent; cập nhật bởi Manager Agent
 - **Nguồn:** `docs/backlog.md` + `docs/roadmap.md`
 - **Quy ước:**
@@ -58,6 +58,7 @@
 - **Risk:** High.
 - **Effort:** M.
 - **Dependency:** TASK-007.
+- **Status 2026-11-04:** **REMEDIATION_COMPLETE** — B1–B9 closed; **không Done**: chờ Reviewer re-review + QA; CI xanh phụ thuộc `TASK-007`.
 - **Test plan:** Git history scan; secret scan; fresh clone; xác nhận runtime test không phụ thuộc artifact.
 - **Chi tiết:** [`TASK-001-security-cleanup.md`](TASK-001-security-cleanup.md)
 
@@ -132,15 +133,17 @@ TASK-001 bị **REJECTED** ngày 2026-10-31 với 9 blocker. Mỗi blocker đã 
 | B2 — Credential chưa rotate | [`TASK-025`](../completed/TASK-025-rotate-credentials.md) | **ACCEPTED RISK APPROVED** — no active production credential; no rotation required | TASK-001 evidence |
 | B3 — Chưa force-push/re-clone | [`TASK-026`](../completed/TASK-026-force-push-fresh-clone.md) | Force-push lịch sử sạch, fresh-clone verification — **DONE** (`f22cf96`) | TASK-024, TASK-027 |
 | B4 — Patch không cô lập | [`TASK-027`](../completed/TASK-027-isolate-patch-freeze.md) | Freeze repo, backup, cô lập patch TASK-001 — **DONE** (`261e9b7`) | TASK-007 |
-| B5 — CI chưa scan history | [`TASK-028`](TASK-028-ci-history-scan.md) | `fetch-depth: 0` + `scan:history` blocking gate — **READY** | TASK-024, TASK-026 |
+| B5 — CI chưa scan history | [`TASK-028`](../completed/TASK-028-ci-history-scan.md) | `fetch-depth: 0` + `scan:history` blocking gate — **DONE** (`26a9d46`; `fetch-depth: 0` + blocking `scan:history`) | TASK-024, TASK-026 |
 | B6 — Thiếu test scanner | [`TASK-029`](../completed/TASK-029-secret-scanner-tests.md) | Unit + negative test cho scanner — **DONE** (qua `TASK-033`, 13/13) | TASK-001 partial patch |
-| B7 — Scanner đọc working tree | [`TASK-030`](TASK-030-scan-staged-blobs.md) | Scan staged blob/index — **READY** | TASK-029, TASK-033 |
+| B7 — Scanner đọc working tree | [`TASK-030`](../completed/TASK-030-scan-staged-blobs.md) | Scan staged blob/index — **DONE** (`4d16d41`; core `7f9291b`; 21/21) | TASK-029, TASK-033 |
 | B8 — Deletion chưa stage | [`TASK-031`](../completed/TASK-031-stage-artifact-deletions.md) | Deletion verified trong history + fresh clone — **DONE** | TASK-024, TASK-027 |
-| B9 — Thiếu cập nhật trạng thái | [`TASK-032`](TASK-032-close-remediation.md) | Đóng evidence, cập nhật docs, sign-off — **BLOCKED** (B5, B7) | TASK-024 → TASK-031 |
+| B9 — Thiếu cập nhật trạng thái | [`TASK-032`](TASK-032-close-remediation.md) | Đóng evidence, cập nhật docs, sign-off — **DONE** (TASK-032, evidence 2026-11-04; review/QA pending) | TASK-024 → TASK-031 |
 
-**Thứ tự còn lại:** `TASK-028` → `TASK-030` → `TASK-032` → TASK-001 re-review + QA.
+**Thứ tự còn lại:** TASK-001 re-review → QA → đóng TASK-001. `TASK-007` là external blocker duy nhất cho CI xanh.
 
-**Gate:** commit chỉ khi task = `COMMIT_AUTHORIZED`; không merge/release/live TASK-001 cho đến khi B1–B9 đóng và có security sign-off.
+**Gate:** commit chỉ khi task = `COMMIT_AUTHORIZED`; không merge/release/live TASK-001 cho đến khi TASK-001 re-review + QA pass và CI xanh (`TASK-007`).
+
+> `TASK-032` DONE về evidence; file còn trong `docs/tasks/` chờ Manager archive sau review/QA. `TASK-035 (proposed)` — local secret hygiene F1/F2 — chưa tạo file.
 
 ## 3. Task P1/P2 — ghi chú thực thi
 
@@ -155,27 +158,18 @@ TASK-001 bị **REJECTED** ngày 2026-10-31 với 9 blocker. Mỗi blocker đã 
 
 ## 4. Task ưu tiên hiện tại
 
-**CURRENT TASK: `TASK-028` — CI history scan (READY, P0).**
+**CURRENT TASK: không còn task READY trong sprint remediation.**
 
-Trạng thái 2026-11-02:
+Trạng thái 2026-11-04:
 
-- **TASK-027 DONE** — commit `261e9b7`, 7 file.
-- **TASK-033 DONE** — commit `f22cf96`, 13/13 test.
-- **TASK-026 DONE** — force-push `42d3555...f22cf96`; fresh clone sạch artifact; `scan:secrets`/`scan:history` pass.
-- **TASK-025 DONE** — Accepted Risk Approved (no active production credential; no rotation required).
-- **TASK-031 DONE** — deletion verified trong history + fresh clone.
-- **TASK-024 DONE** — history sạch, đã push.
-- **TASK-029 DONE** — hoàn thiện qua TASK-033.
-- **TASK-034 DONE** — authorization-2026-11-02 APPROVED.
-- **TASK-028 READY** — CI history scan (P0).
-- **TASK-030 READY** — staged-blob scan (P1).
-- **TASK-032 BLOCKED** — chờ TASK-028/TASK-030.
-- **TASK-007 AUTHORIZATION_REQUIRED** — runtime fixes chưa commit; fresh clone `npm run check` 188/190; cần Owner Decision + review.
-- **TASK-001** vẫn **BLOCKED** cho đến khi B1–B9 đóng + re-review.
+- **TASK-032 REVIEW** — evidence B1–B9 đã ghi; chờ Reviewer/QA xác nhận.
+- **TASK-001 REMEDIATION_COMPLETE** — B1–B9 closed; chưa Done: chờ re-review + QA.
+- **TASK-007 AUTHORIZATION_REQUIRED** — `7f9291b` chứa runtime fixes chưa được authorize/push; external blocker duy nhất cho CI xanh.
+- **TASK-028/030/033/034 DONE** — xem `docs/completed/`.
 
-Thứ tự: `TASK-028` → `TASK-030` → `TASK-032` → TASK-001 re-review + QA.
+**Next action:** Reviewer re-review `TASK-001` → QA → đóng `TASK-001` (chỉ sau khi `TASK-007` được xử lý để CI xanh).
 
-**STOP CONDITION: NO** — còn task READY và task cần Owner Decision.
+**STOP CONDITION: NO** — còn `TASK-007` cần Owner Decision và `TASK-001` chưa re-review/QA.
 
 Kế hoạch gốc và test plan chi tiết nằm trong [`TASK-001-security-cleanup.md`](TASK-001-security-cleanup.md); review record nằm trong [`docs/reviews/TASK-001-review-2026-10-31.md`](../reviews/TASK-001-review-2026-10-31.md).
 

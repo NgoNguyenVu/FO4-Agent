@@ -1,6 +1,6 @@
 # Roadmap — FO4-Agent
 
-- **Cập nhật:** 2026-11-02 (Manager: TASK-027/033 committed; TASK-026 force-push DONE; TASK-025 Accepted Risk; TASK-031 DONE; TASK-028/030 READY; TASK-007 AUTHORIZATION_REQUIRED)
+- **Cập nhật:** 2026-11-04 (TASK-032 evidence — B1–B9 closed; TASK-001 REMEDIATION_COMPLETE, chờ re-review + QA; TASK-007 AUTHORIZATION_REQUIRED)
 - **Người lập:** Architect Agent; cập nhật bởi Manager Agent
 - **Nguồn dữ liệu:** `docs/backlog.md` + Cortex MCP (`cortex_cypher`, `cortex_code_context`, `cortex_code_impact`, `cortex_detect_changes`).
 - **Trạng thái:** Roadmap đề xuất, chưa cam kết ngày cứng. Thời lượng là ước tính cho một team nhỏ.
@@ -67,10 +67,10 @@ lib/ui-lock (tuần tự hóa thao tác UI)
 **Mục tiêu:** chặn rò rỉ dữ liệu, chặn tiêu BP ngoài kiểm soát, đảm bảo tắt an toàn, đưa thay đổi critical vào review.
 
 **Task:**
-- `TASK-001` — Security cleanup: xóa debug artifact khỏi git history, rotate credential nếu cần, thêm ignore/secret scan. **Đã REJECTED ngày 2026-10-31; remediation chuyển sang Phase 0.1.**
+- `TASK-001` — Security cleanup: xóa debug artifact khỏi git history, rotate credential nếu cần, thêm ignore/secret scan. **REMEDIATION_COMPLETE (B1–B9 closed 2026-11-04); chưa Done — chờ re-review + QA; CI xanh phụ thuộc TASK-007.**
 - `TASK-003` — Financial hard caps, **Stage A**: cap khẩn cấp theo run/ngày, dry-run mặc định, live gate; chưa phụ thuộc journal.
 - `TASK-004` — Graceful shutdown: SIGINT/SIGTERM, đóng browser, dừng worker, flush log.
-- `TASK-007` — Freeze/review/reindex working tree critical. **AUTHORIZATION_REQUIRED:** TASK-001 patch đã commit/push (`261e9b7`, `f22cf96`); runtime fixes chưa commit; fresh clone `npm run check` 188/190; cần Owner Decision + review.
+- `TASK-007` — Freeze/review/reindex working tree critical. **AUTHORIZATION_REQUIRED:** TASK-001 patch đã commit/push (`261e9b7`, `f22cf96`); `7f9291b` chứa runtime fixes chưa được authorize/push; fresh clone `npm run check` 188/190; là external blocker duy nhất cho CI xanh; cần Owner Decision + review.
 
 **Exit criteria:**
 - Có hard cap BP theo run/ngày; live script không thể chạy nhầm production.
@@ -89,7 +89,7 @@ lib/ui-lock (tuần tự hóa thao tác UI)
 
 **Điều kiện vào phase:** TASK-001 đã bị REJECTED; patch mitigation một phần đã có nhưng chưa được commit/push/merge.
 
-**Trạng thái 2026-11-02:** `TASK-027` **DONE** (`261e9b7`); `TASK-033` **DONE** (`f22cf96`); `TASK-026` **DONE** — force-push `42d3555...f22cf96`, fresh clone sạch artifact, scan pass; `TASK-025` **DONE** — Accepted Risk Approved (no active credential); `TASK-031` **DONE** — deletion verified; `TASK-024` **DONE** — history sạch, đã push. Còn lại: `TASK-028` **READY** (CI history scan), `TASK-030` **READY** (staged-blob scan), `TASK-032` **BLOCKED** (chờ hai task trên). `TASK-007` **AUTHORIZATION_REQUIRED** — runtime fixes chưa commit, fresh clone `npm run check` 188/190. **STOP CONDITION: NO** — còn task READY và task cần Owner Decision.
+**Trạng thái 2026-11-04:** B1–B9 đã đóng. `TASK-024`–`TASK-031`, `TASK-033`, `TASK-034` **DONE**; `TASK-028` `26a9d46`; `TASK-030` `4d16d41` (core `7f9291b`); `TASK-032` evidence recorded 2026-11-04 (review/QA pending). `TASK-001` **REMEDIATION_COMPLETE — pending re-review + QA**, chưa Done. `TASK-007` **AUTHORIZATION_REQUIRED** — runtime fixes chưa được authorize/push; CI/fresh clone 188/190. **STOP CONDITION: NO**.
 
 **Task:**
 
@@ -99,22 +99,23 @@ lib/ui-lock (tuần tự hóa thao tác UI)
 | 2 | `TASK-024` | B1 | **DONE (pushed).** Rewrite git history xóa `debug/trade-bulk.html` và 10 ảnh debug khỏi mọi commit; new HEAD `a4b7a25` → `f22cf96` |
 | 3 | `TASK-025` | B2 | **DONE** — Accepted Risk Approved (no active production credential; no rotation required) |
 | 4 | `TASK-026` | B3 | **DONE** — force-push `42d3555...f22cf96`; fresh clone sạch artifact; scan pass |
-| 5 | `TASK-028` | B5 | **READY.** CI checkout `fetch-depth: 0` và chạy `npm run scan:history` như blocking gate |
+| 5 | `TASK-028` | B5 | **DONE** (`26a9d46`). CI checkout `fetch-depth: 0` và chạy `npm run scan:history` như blocking gate |
 | 6 | `TASK-029` | B6 | **DONE** — Unit + negative test cho secret scanner (remediation `TASK-033` **DONE**, `f22cf96`) |
-| 7 | `TASK-030` | B7 | **READY.** Scanner đọc staged blob/index thay vì chỉ working tree |
+| 7 | `TASK-030` | B7 | **DONE** (`4d16d41`; core `7f9291b`; review/QA 2026-11-04). Scanner đọc staged blob/index thay vì chỉ working tree |
 | 8 | `TASK-031` | B8 | **DONE** — deletion verified trong history + fresh clone |
-| 9 | `TASK-032` | B9 | **BLOCKED** (B5, B7). Đóng evidence, cập nhật TASK-001/incident/backlog/roadmap, security sign-off |
+| 9 | `TASK-032` | B9 | **DONE (evidence 2026-11-04; review/QA pending).** Đóng evidence, cập nhật TASK-001/incident/backlog/roadmap, security sign-off |
+| 10 | TASK-001 re-review + QA | — | **PENDING.** Reviewer verdict mới + QA PASS; chỉ đóng TASK-001 sau đó và sau khi CI xanh (`TASK-007`) |
 
 **Exit criteria:**
 
 - `npm run scan:history` pass **0 finding**.
 - `git log --all -- debug/trade-bulk.html` không còn kết quả; `git rev-list --objects --all` không còn artifact.
 - Credential cũ bị từ chối; credential mới hoạt động; có evidence và sign-off.
-- Remote sạch; fresh clone pass `scan:secrets`, `scan:history` (đạt tại `f22cf96`); `npm run check` còn 188/190 — phụ thuộc TASK-007.
+- Remote sạch; fresh clone pass `scan:secrets`, `scan:history` (đạt tại `f22cf96`); local `npm run check` **198/198**; remote/fresh clone **188/190** — phụ thuộc `TASK-007`.
 - CI có history scan blocking và có negative test.
 - Scanner có test cho endpoint/token/private key/binary/history; staged secret bị phát hiện.
 - Deletion của artifact được stage/commit; index không còn `debug/*.html` hoặc `debug/*.png`.
-- TASK-001 chuyển từ **Blocked — REJECTED** sang **Done** chỉ sau khi tất cả điều trên đóng.
+- TASK-001 chỉ chuyển **Done** sau khi tất cả điều trên đóng **và** có Reviewer verdict mới + QA PASS + CI xanh (`TASK-007`). Hiện tại: **REMEDIATION_COMPLETE**, không Done.
 
 **Phụ thuộc:**
 
@@ -236,16 +237,16 @@ TASK-014 ──► TASK-016
 TASK-018 ──► TASK-019
 ```
 
-> `TASK-024`, `TASK-025`, `TASK-026`, `TASK-027`, `TASK-031`, `TASK-033` đã DONE và chuyển sang `docs/completed/`. Remote/fresh clone đã được xác minh tại `f22cf96`.
+> `TASK-024`, `TASK-025`, `TASK-026`, `TASK-027`, `TASK-028`, `TASK-030`, `TASK-031`, `TASK-033`, `TASK-034` đã DONE. `TASK-032` evidence recorded 2026-11-04 (review/QA pending). Remote/fresh clone xác minh tại `f22cf96`; local HEAD `3b048b9`.
 
-**Đường găng:** `TASK-028 → TASK-030 → TASK-032` (remediation TASK-001), sau đó `TASK-007 → TASK-002 → TASK-005 → TASK-008 → TASK-012 → TASK-013`.
+**Đường găng:** `TASK-007 → TASK-001 re-review → QA` (CI xanh + đóng TASK-001), sau đó `TASK-002 → TASK-005 → TASK-008 → TASK-012 → TASK-013`. `TASK-032` đã hoàn tất phần evidence.
 
 ## 5. Timeline ước tính
 
 | Phase | Thời lượng | Task chính | Kết quả bàn giao |
 |---|---:|---|---|
 | Phase 0 | 1 tuần | TASK-003, 004, 007; TASK-001 → Phase 0.1 | Có hard cap, tắt an toàn, working tree sạch; TASK-001 chuyển remediation |
-| Phase 0.1 | 2–3 ngày | TASK-024–032 | TASK-001 remediation: history local sạch (TASK-024 done), credential rotate, remote force-push, CI history gate, scanner test, fresh clone pass |
+| Phase 0.1 | 2–3 ngày | TASK-024–032 | Remediation evidence hoàn tất 2026-11-04; còn TASK-001 re-review/QA và TASK-007 để CI xanh |
 | Phase 1 | 2 tuần | TASK-002, 005, 006, 017 | Purchase journal, worker lock/lease, config đáng tin, UI lock cứng |
 | Phase 2 | 3 tuần | TASK-008–012 | Controller mỏng, shared mini-app, selector/error/context |
 | Phase 3 | 2 tuần | TASK-013–016 | Integration test, CI, log an toàn |
@@ -278,7 +279,7 @@ TASK-018 ──► TASK-019
 - Backlog: [`docs/backlog.md`](backlog.md)
 - Task board: [`docs/tasks/README.md`](tasks/README.md)
 - Review TASK-001: [`docs/reviews/TASK-001-review-2026-10-31.md`](reviews/TASK-001-review-2026-10-31.md)
-- Task ưu tiên: [`docs/tasks/TASK-028-ci-history-scan.md`](tasks/TASK-028-ci-history-scan.md)
+- Task đang review: [`docs/tasks/TASK-032-close-remediation.md`](tasks/TASK-032-close-remediation.md)
 - Review TASK-027: [`docs/reviews/TASK-027-review-2026-11-01.md`](reviews/TASK-027-review-2026-11-01.md)
 - QA TASK-027: [`docs/reviews/TASK-027-qa-2026-11-01.md`](reviews/TASK-027-qa-2026-11-01.md)
 - Task gốc: [`docs/tasks/TASK-001-security-cleanup.md`](tasks/TASK-001-security-cleanup.md)
