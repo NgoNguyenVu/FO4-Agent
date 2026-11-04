@@ -293,6 +293,46 @@ If the bot reports `reason=43` because the inventory and transfer market are
 full and says the auto-buy command was stopped, the agent stops the loop and
 waits for a fresh `/startagent` instead of starting another cycle.
 
+## Secret scanning
+
+Three scanner modes share the same rule set (`scripts/check-secrets.js`):
+
+| Command | Reads from | Use it |
+|---|---|---|
+| `npm run scan:secrets` | working tree files listed in the git index (`git ls-files`) | fast local check |
+| `npm run scan:staged` | staged blobs in the index (`git show :<path>`) | right before `git commit` |
+| `npm run scan:history` | every commit reachable from all refs (`git log -p --all`) | right before `git push` / in CI |
+
+Exit codes: `0` when nothing is found, `1` when at least one finding is
+reported. Every finding is printed as `<path>: <rule>` so both the file and the
+matched rule name are visible.
+
+Scope and intentional skips:
+
+- Only **tracked/index** files are scanned. Untracked files are never scanned,
+  including a brand-new `.env` or a local config file, so the scanner does not
+  protect content that was never added to git.
+- Binary files (containing a NUL byte) are skipped.
+- Files removed from the index are skipped: `--staged` has no blob to read for
+  them.
+- `scripts/check-secrets.js` itself is skipped so its own rule patterns do not
+  produce findings.
+- Paths matching `debug/*.png` and `debug/*.html` are reported as
+  `tracked debug artifact` instead of being content-scanned.
+
+Known limitations:
+
+- `git add -N` (intent-to-add) entries are not scanned; the index entry stays
+  empty until the file is really staged.
+- When both `--staged` and `--history` are passed, history mode wins.
+- If `git show :<path>` fails (for example a file larger than 64 MB), that file
+  is skipped silently.
+
+Recommended workflow: run `npm run scan:staged` before every commit (it is the
+only mode that still catches a secret that was staged and then deleted or
+overwritten in the working tree) and run `npm run scan:history` before pushing.
+CI (`.github/workflows/security.yml`) runs all three modes.
+
 ## Vòng `/startagent` (đầy kho -> nâng -> mua)
 
 - Kho/TTCN đầy -> chuyển sang phase nâng.

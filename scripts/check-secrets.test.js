@@ -224,3 +224,36 @@ test("secret scanner passes in staged mode when a file is deleted from the index
 
   expectClean(runScanner(dir, ["--staged"]));
 });
+
+test("secret scanner fails in staged mode for a staged secret then deleted working tree (remediation scenario)", (t) => {
+  const dir = createTempRepo(t);
+  const secret = "AKIA" + "ABCDEFGHIJKLMNOP"; // AWS access key pattern
+  writeFile(dir, "src/config.json", `{\n  "awsKeyId": "${secret}"\n}\n`);
+  git(dir, ["add", "src/config.json"]);
+  fs.rmSync(path.join(dir, "src/config.json"), { force: true });
+
+  expectFinding(runScanner(dir, ["--staged"]), "AWS access key");
+});
+
+test("secret scanner passes in staged mode for a secret that only exists in the working tree", (t) => {
+  const dir = createTempRepo(t);
+  writeFile(dir, "src/app.js", "console.log('clean');\n");
+  commitAll(dir, "init");
+
+  const awsKeyId = "AKIA" + "ABCDEFGHIJKLMNOP";
+  writeFile(dir, "src/app.js", `const awsKeyId = "${awsKeyId}";\n`);
+
+  const stagedResult = runScanner(dir, ["--staged"]);
+  expectClean(stagedResult);
+  assert.ok(stagedResult.stdout.includes("Secret scan passed (staged index)."));
+
+  expectFinding(runScanner(dir, []), "AWS access key");
+});
+
+test("secret scanner fails in staged mode for a staged debug artifact", (t) => {
+  const dir = createTempRepo(t);
+  writeFile(dir, "debug/screenshot.png", Buffer.from("fake png bytes"));
+  git(dir, ["add", "debug/screenshot.png"]);
+
+  expectFinding(runScanner(dir, ["--staged"]), "tracked debug artifact");
+});

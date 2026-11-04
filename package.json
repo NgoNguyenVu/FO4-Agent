@@ -8,7 +8,8 @@
     "check": "node --check agent.js && node --test",
     "test": "node --test",
     "scan:secrets": "node scripts/check-secrets.js",
-    "scan:history": "node scripts/check-secrets.js --history"
+    "scan:history": "node scripts/check-secrets.js --history",
+    "scan:staged": "node scripts/check-secrets.js --staged"
   },
   "dependencies": {
     "playwright": "^1.56.1"

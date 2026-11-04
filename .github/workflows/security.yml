@@ -28,6 +28,10 @@ jobs:
       - name: Scan tracked files for secrets
         run: npm run scan:secrets
 
+      # Smoke test for --staged mode; on a clean checkout index == HEAD, so this duplicates scan:secrets by design.
+      - name: Scan staged index for secrets
+        run: npm run scan:staged
+
       - name: Scan full git history for secrets
         run: npm run scan:history
 
