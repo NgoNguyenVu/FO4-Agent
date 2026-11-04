@@ -12,3 +12,6 @@ debug/*.png
 debug/*.html
 debug/*.json
 debug/*.log
+
+# MCP local config contains credentials; never commit.
+.mcp.json

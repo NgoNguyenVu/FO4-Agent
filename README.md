@@ -333,6 +333,10 @@ only mode that still catches a secret that was staged and then deleted or
 overwritten in the working tree) and run `npm run scan:history` before pushing.
 CI (`.github/workflows/security.yml`) runs all three modes.
 
+`.mcp.json` is a local-only MCP config that may contain credentials (Bearer keys).
+It is listed in `.gitignore` and must never be committed; keep it local-only
+and rotate its keys if they ever appear in git history.
+
 ## Vòng `/startagent` (đầy kho -> nâng -> mua)
 
 - Kho/TTCN đầy -> chuyển sang phase nâng.
