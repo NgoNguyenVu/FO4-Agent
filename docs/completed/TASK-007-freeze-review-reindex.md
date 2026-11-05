@@ -6,7 +6,7 @@
 - **Risk:** Critical
 - **Effort:** S
 - **Dependency:** —
-- **Status:** **AUTHORIZATION_REQUIRED** — runtime changes cần Owner Decision + review độc lập (2 test fresh clone fail)
+- **Status:** **DONE** — 2026-11-05. Reviewer vòng 1 **REJECTED** (`IN_SCOPE_FIX`, config regression trong `7f9291b`), Coder fix bằng commit `9542347` (`ovrMin=118`, `maxPriceBP=888888`, `minRatio=74`, `purchaseTimeoutSeconds=3600`), Reviewer vòng 2 **APPROVED**, QA **PASS** 198/198. Đã push `c93649e..9542347` lên `origin/main`. Bằng chứng: [`review`](../reviews/TASK-007-review-2026-11-05.md), [`qa`](../reviews/TASK-007-qa-2026-11-05.md).
 - **Owner đề xuất:** Tech Lead + Reviewer độc lập
 
 ## 1. Mục tiêu

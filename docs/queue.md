@@ -1,34 +1,31 @@
 # Current Queue
 
-- **Cập nhật:** 2026-11-04
+- **Cập nhật:** 2026-11-05
 - **Sprint:** Security Remediation — TASK-001
-- **Company Status:** **IN_PROGRESS — TASK-001** (B1–B8 đã đóng; còn B9)
-- **Active Task:** `TASK-032` — **READY** (đóng remediation + evidence, P2)
-- **Current Focus:** Đóng remediation + evidence; sau đó TASK-001 re-review + QA.
-- **Repo:** local `main` = `4d16d41`; remote `main` = `26a9d46` (chưa push các commit local); history sạch artifact; CI đã có history gate blocking.
+- **Company Status:** **IN_PROGRESS — TASK-001** (B1–B9 đã đóng; **TASK-007 DONE**; **TASK-035 DONE**; còn TASK-039 + TASK-001 re-review + QA)
+- **Active Task:** `TASK-039` — **TODO**, đã đủ điều kiện mở sau khi `TASK-007` DONE (`9542347`)
+- **Current Focus:** TASK-039 Review + QA trên diff ICON mới; song song TASK-001 re-review + QA.
+- **Repo:** local `main` = `9542347`; remote `main` = `9542347` (đã đồng bộ `0 0`); history sạch artifact; CI đã có history gate blocking.
 - **Freeze:** Không còn freeze chung. Commit chỉ khi task = `COMMIT_AUTHORIZED`; **không merge, release hoặc chạy live**.
 - **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed).
-- **Residual risk:** fresh clone/CI `npm run check` = **188/190** do runtime fixes của TASK-007 chưa commit. TASK-007 đang **AUTHORIZATION_REQUIRED**.
+- **Residual risk:** `npm run check` tại `9542347` = **198/198**. TASK-007 **DONE** (config regression đã sửa bằng `9542347`). F1/F2 → **TASK-035 DONE**. Còn mở: Review/QA TASK-039 và TASK-001 re-review, cùng quyết định tài chính `maxPriceBP 888888` / `purchaseTimeoutSeconds 0` (TASK-003).
 
 ## 1. Ready — executable
 
-| Thứ tự | Task | Priority | Status | Điều kiện |
-|---:|---|---|---|---|
-| 1 | `TASK-032` — Close remediation + evidence | P2 | **READY** | B5/B7 đã đóng; cập nhật TASK-001/incident/backlog/roadmap + security sign-off |
+| Task | Priority | Bước kế tiếp |
+|---|---|---|
+| `TASK-039` — ICON continuous-buy + inventory gate | P0 | **Review + QA** trên diff ICON trong working tree (14 file runtime + 4 test + README). TASK-007 đã chốt baseline `config.json` (`9542347`). |
+| `TASK-001` — Security cleanup | P0 | **Reviewer re-review + QA pass**; đóng khi `npm run check` xanh trên `9542347` (đã 198/198). |
 
 ## 2. Authorization required
 
-| Task | Priority | Trạng thái | Quyết định cần owner |
-|---|---|---|---|
-| `TASK-007` — Freeze/review/reindex working tree critical | P0 | **AUTHORIZATION_REQUIRED** | Cho phép commit/push runtime fixes (`config.json`, `features/upgrade/loop.js`, `features/upgrade/runner.js`) sau review độc lập; 2 test fresh clone fail vì các fix này chưa vào history |
+_(không có task nào chờ Owner Decision)_
 
 ## 3. Blocked
 
-| Task | Priority | Blocked by | Điều kiện mở |
-|---|---|---|---|
-| `TASK-001` — Security cleanup | P0 | B9, TASK-007 | Evidence/sign-off + Reviewer re-review + QA pass; CI xanh phụ thuộc TASK-007 |
+_(không có task bị block)_
 
-## 4. Done — 2026-11-02
+## 4. Done — 2026-11-04
 
 | Task | Kết quả | Record |
 |---|---|---|
@@ -42,6 +39,9 @@
 | `TASK-029` — Secret scanner tests | **DONE** — hoàn thiện qua `TASK-033` | [`completed/TASK-029`](completed/TASK-029-secret-scanner-tests.md) |
 | `TASK-034` — Authorization request | **DONE** — authorization-2026-11-02 APPROVED | [`completed/TASK-034`](completed/TASK-034-authorization-request-security-remediation.md) |
 | `TASK-030` — Scan staged blobs/index | **DONE** — commit `4d16d41`; 21/21 test; Reviewer APPROVED + QA PASS | [`completed/TASK-030`](completed/TASK-030-scan-staged-blobs.md) |
+| `TASK-032` — Close remediation + evidence | **DONE** — evidence recorded 2026-11-04; Review APPROVED + QA PASS | [`completed/TASK-032`](completed/TASK-032-close-remediation.md) |
+| `TASK-035` — Local secret hygiene (F1/F2) | **DONE** — commit `cc605f9`; Review APPROVED + QA PASS; F1/F2 đóng | [`completed/TASK-035`](completed/TASK-035-local-secret-hygiene.md) |
+| `TASK-007` — Freeze/review/reindex working tree critical | **DONE** — Reviewer v1 REJECTED (`IN_SCOPE_FIX`), Coder fix `9542347`, Reviewer v2 APPROVED, QA PASS 198/198; push `c93649e..9542347` | [`completed/TASK-007`](completed/TASK-007-freeze-review-reindex.md) · [`review`](reviews/TASK-007-review-2026-11-05.md) · [`qa`](reviews/TASK-007-qa-2026-11-05.md) |
 
 ## 5. Commit / push evidence
 
@@ -49,9 +49,12 @@
 - `f22cf96` — `test(security): cover remaining secret scanner rules and history assertion` (1 file).
 - `26a9d46` — `ci(security): scan full git history for secrets` (1 file, +5 dòng).
 - `4d16d41` — `feat(security): add staged-index secret scan mode` (4 file, +79/−1).
-- `7f9291b` — local, chưa push: chứa phần lõi `scanStaged()` + T1–T5 (và runtime fixes TASK-007 ngoài phạm vi).
-- Remote `main`: `26a9d46424aa121c0a65cef15e87d27e7cfe402f`; local `main`: `4d16d41` (chưa push).
-- Fresh clone trước đó: `f22cf96` — `scan:secrets`/`scan:history` pass; `npm run check` 188/190 (TASK-007).
+- `c93649e` — `docs(security): record TASK-001 remediation evidence and close B9 (TASK-032)`.
+- `cc605f9` — `chore(security): ignore .mcp.json and remove stale local agents ref (TASK-035)` (3 file, +8/−1).
+- `9542347` — `fix(config): restore documented TASK-007 runtime values` (1 file, +4/−4: `ovrMin=118`, `maxPriceBP=888888`, `minRatio=74`, `purchaseTimeoutSeconds=3600`).
+- `7f9291b` — đã trên `origin/main`; chứa phần lõi `scanStaged()` + T1–T5 (và runtime fixes TASK-007 ngoài phạm vi).
+- Remote `main` = local `main` = `9542347` (`git rev-list --left-right --count` → `0 0`).
+- QA TASK-007 vòng 2: worktree tại `cc605f9` + blob config `9542347` → **198/198**, `scan:secrets`/`scan:staged` pass.
 
 ## 6. Gate để đóng TASK-001
 
@@ -62,13 +65,14 @@
 - [x] Scanner có test (21/21) và history-leak assertion.
 - [x] CI có history scan blocking (`TASK-028`, `26a9d46`).
 - [x] Scanner đọc staged blob/index (`TASK-030`, `4d16d41`).
-- [ ] Evidence/status + security sign-off (`TASK-032`).
-- [ ] TASK-001 Reviewer re-review + QA pass.
-- [ ] `npm run check` trên fresh clone/CI xanh — phụ thuộc TASK-007.
+- [x] Evidence/status + security sign-off (`TASK-032`).
+- [x] F1/F2 (`TASK-035` DONE, `cc605f9`) — mở khóa TASK-001 Reviewer re-review + QA pass.
+- [x] `npm run check` tại `9542347` = **198/198** (QA TASK-007 vòng 2, worktree sạch).
 
 ## 7. STOP CONDITION
 
-**STOP CONDITION: NO** — còn task executable (`TASK-032`) và một task cần Owner Decision (`TASK-007`). Chưa thỏa đồng thời 3 điều kiện STOP của `.ai/company.md`.
+**STOP CONDITION: NO** — `TASK-007` đã DONE và remote đồng bộ, nhưng `TASK-039` chưa Review/QA và `TASK-001` chưa re-review.
 
-- `TASK-032` là CURRENT TASK của chu kỳ này (READY).
-- `TASK-001` chỉ đóng sau `TASK-032` + re-review + QA.
+- `TASK-039` đã đủ điều kiện mở; cần Reviewer + QA trên diff ICON trước khi `READY_FOR_COMMIT`.
+- `TASK-001` cần Reviewer re-review + QA pass trước khi DONE.
+- Quyết định tài chính `maxPriceBP 888888` / `purchaseTimeoutSeconds 0` vẫn chờ Owner (TASK-003).
