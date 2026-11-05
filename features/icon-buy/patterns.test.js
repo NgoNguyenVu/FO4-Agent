@@ -203,24 +203,32 @@ test("TTCN order selection skips baseline, sell and receive orders", () => {
   assert.equal(selectOrderToCancel(orders, success, new Set(["old"])).orderId, "new");
   assert.equal(selectOrderToCancel(orders, success).orderId, "new");
   assert.equal(selectOrderToCancel(orders, success, new Set(["old", "new"])), null);
+  assert.equal(
+    selectOrderToCancel(orders, { ...success, orderId: "old" }, new Set()).orderId,
+    "old"
+  );
+  assert.equal(
+    selectOrderToCancel(orders, { ...success, orderId: "missing" }, new Set()),
+    null
+  );
 });
 
 test("position threshold decides keep, cancel, or unknown", () => {
-  assert.equal(getPositionAction({ position: 6 }, 5), "cancel");
-  assert.equal(getPositionAction({ position: 5 }, 5), "keep");
+  assert.equal(getPositionAction({ position: 4 }, 3), "cancel");
+  assert.equal(getPositionAction({ position: 3 }, 3), "keep");
   assert.equal(getPositionAction({ position: 1 }, 5), "keep");
-  assert.equal(getPositionAction({ position: null, positionError: "E004" }, 5), "unknown");
-  assert.equal(getPositionAction(null, 5), "unknown");
+  assert.equal(getPositionAction({ position: null, positionError: "E004" }, 3), "unknown");
+  assert.equal(getPositionAction(null, 3), "unknown");
 });
 
-test("icon session cancels bad and unknown positions, keeps only confirmed <= threshold", () => {
-  assert.equal(shouldCancelIconOrder({ position: 6 }, 5), true);
-  assert.equal(shouldCancelIconOrder({ position: 5 }, 5), false);
-  assert.equal(shouldCancelIconOrder({ position: 1 }, 5), false);
-  assert.equal(shouldCancelIconOrder({ position: null, positionError: "E004" }, 5), true);
-  assert.equal(shouldCancelIconOrder({ position: null }, 5), true);
-  assert.equal(shouldCancelIconOrder({ position: "không rõ" }, 5), true);
-  assert.equal(shouldCancelIconOrder(null, 5), false);
+test("icon session cancels only confirmed positions above 3", () => {
+  assert.equal(shouldCancelIconOrder({ position: 4 }, 3), true);
+  assert.equal(shouldCancelIconOrder({ position: 3 }, 3), false);
+  assert.equal(shouldCancelIconOrder({ position: 1 }, 3), false);
+  assert.equal(shouldCancelIconOrder({ position: null, positionError: "E004" }, 3), false);
+  assert.equal(shouldCancelIconOrder({ position: null }, 3), false);
+  assert.equal(shouldCancelIconOrder({ position: "không rõ" }, 3), false);
+  assert.equal(shouldCancelIconOrder(null, 3), false);
 });
 
 test("icon menu signature needs both the member menu and Auto Mua entry", () => {

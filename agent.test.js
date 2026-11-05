@@ -1675,7 +1675,7 @@ test("buy and upgrade stop flows do not turn /starticon into a main mode", () =>
   }
 });
 
-test("/starticon cleans up its own new purchase task and TTCN order on timeout or abort", () => {
+test("/starticon only reads /stop and never stops tasks or cancels unknown orders", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const orderSrc = fs.readFileSync(
@@ -1690,16 +1690,16 @@ test("/starticon cleans up its own new purchase task and TTCN order on timeout o
   assert.match(orderSrc, /isStopRequested/);
   assert.match(orderSrc, /if \(typeof isStopRequested === "function" && isStopRequested\(\)\)/);
   assert.match(runnerSrc, /captureStopTaskBaseline/);
-  assert.match(runnerSrc, /stopNewIconTasks/);
-  assert.match(runnerSrc, /cancelUnconfirmedOrders/);
+  assert.doesNotMatch(runnerSrc, /stopNewIconTasks/);
+  assert.doesNotMatch(runnerSrc, /cancelUnconfirmedOrders/);
   assert.match(runnerSrc, /if \(error\.purchaseSent\)/);
   assert.match(runnerSrc, /if \(result\.stopped\)/);
   assert.match(runnerSrc, /const usedTaskSlots = countRunningTaskSlots/);
   assert.match(runnerSrc, /getAvailableTaskSlots/);
   assert.match(runnerSrc, /reason: "task-slots-full"/);
-  assert.match(runnerSrc, /reason: "no-task-baseline"/);
+  assert.match(runnerSrc, /giữ nguyên phiên ICON và chờ nhịp tiếp theo/);
   assert.match(runnerSrc, /reason: "no-purchase-success"/);
-  assert.match(runnerSrc, /reason: "icon-task-stop-failed"/);
+  assert.match(runnerSrc, /Không dừng phiên ICON vì/);
   assert.doesNotMatch(runnerSrc, /Dừng tất cả/);
 });
 

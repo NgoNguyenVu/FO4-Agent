@@ -85,13 +85,12 @@ async function lookupFavoriteIconPlayers(page, rl) {
 
   let lastError = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const button = await ensureFeatureButton(page, rl, "Tra cứu mã cầu thủ offline");
     const baseline = reader.snapshot();
     // Chụp id ngay trước khi bấm: các tin menu do /tn vừa gửi không bị coi là
     // kết quả tra cứu, còn tin bot trả sau đó luôn có id mới.
     const baselineIds = await getVisibleMessageIds(page).catch(() => null);
     log(`Đang tra cứu danh sách ICON yêu thích (lần ${attempt}/2).`);
-    await clickFeatureButton(page, rl, "Tra cứu mã cầu thủ offline", { button });
+    await clickFeatureButton(page, rl, "Tra cứu mã cầu thủ offline");
 
     const result = await waitForLookupResult(
       page,

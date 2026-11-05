@@ -121,20 +121,20 @@ async function ensureFeatureButton(page, rl, label, { refresh = false } = {}) {
 
 // Bấm nút chức năng. Nếu callback token đã cũ (E002) thì xin menu mới rồi bấm
 // lại; nếu bot báo thao tác nhanh thì chờ đúng thời gian bot yêu cầu.
-async function clickFeatureButton(page, rl, label, { button = null, retries = 2 } = {}) {
+async function clickFeatureButton(page, rl, label, { retries = 2 } = {}) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
 
-  let target = button;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    if (!target) target = await ensureFeatureButton(page, rl, label);
+    // Luôn lấy locator từ menu gần nhất ngay trước khi bấm; locator truyền từ
+    // caller có thể trỏ vào callback cũ sau khi Telegram render lại chat.
+    const target = await ensureFeatureButton(page, rl, label);
     const baseline = reader.snapshot();
     try {
       await withTimeout(target.click(), 30_000, `bấm nút ${label}`);
     } catch (error) {
       if (attempt >= retries) throw error;
       log(`Nút "${label}" không bấm được (${error.message}); tìm lại nút.`);
-      target = await waitForButtonByText(page, label, 10_000);
       continue;
     }
 
@@ -149,7 +149,7 @@ async function clickFeatureButton(page, rl, label, { button = null, retries = 2 
       const delay = parseRetryAfterSeconds(fresh) * 1_000 + 500;
       log(`Bot giới hạn thao tác sau khi bấm "${label}"; chờ ${delay / 1_000}s.`);
       await page.waitForTimeout(delay);
-      target = await waitForButtonByText(page, label, 10_000);
+      await waitForButtonByText(page, label, 10_000);
       continue;
     }
     if (/E006/i.test(getLatestBotError(fresh) || "")) {

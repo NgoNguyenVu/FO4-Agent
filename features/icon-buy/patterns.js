@@ -202,6 +202,9 @@ function parseTtcnCardText(text) {
 function selectOrderToCancel(orders, success, knownOrderIds = null) {
   const matches = (orders || []).filter((order) => {
     if (!order || !order.orderId) return false;
+    if (success.orderId && String(order.orderId) !== String(success.orderId)) {
+      return false;
+    }
     if (String(order.spid) !== String(success.code)) return false;
     if (Number(order.orderType) !== 1) return false;
     if (!/Hủy/i.test(String(order.action || ""))) return false;
@@ -229,10 +232,10 @@ function getPositionAction(success, threshold = 5) {
   return "unknown";
 }
 
-// Chính sách của /starticon: vị trí > ngưỡng hoặc không đọc được vị trí (kể cả
-// E004) đều phải đưa vào TTCN để hủy đơn mới. Chỉ giữ khi biết chắc vị trí đẹp.
+// Chỉ hủy khi đọc được vị trí và vị trí vượt ngưỡng. Không hủy đơn chỉ vì
+// không đọc được vị trí.
 function shouldCancelIconOrder(success, threshold = 5) {
-  return Boolean(success) && getPositionAction(success, threshold) !== "keep";
+  return Boolean(success) && getPositionAction(success, threshold) === "cancel";
 }
 
 module.exports = {

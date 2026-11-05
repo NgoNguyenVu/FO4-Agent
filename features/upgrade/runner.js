@@ -25,7 +25,12 @@ const {
   ensureMessageComposer,
   refillComposer
 } = require("../composer");
-const { sendBotCommand, getPaymentFrameLocator, inspectPaymentFrames } = require("../telegram-io");
+const {
+  sendBotCommand,
+  getPaymentFrameLocator,
+  inspectPaymentFrames,
+  closeMiniApp
+} = require("../telegram-io");
 const { log } = require("../agent-log");
 const {
   UG_STOP_COMMAND,
@@ -45,10 +50,12 @@ const {
   getOrphanUpgradeOutcome,
   parseUpgradeTargetCards,
   summarizeUpgradeTargetCards,
+  countInventoryIcons,
   parseOvrList
 } = require("./patterns");
 const {
   getUpgradeFrame,
+  reloadUpgradeTargetList,
   configureUpgradeFrame,
   readUpgradeTargetCards,
   openUpgradeFrameForCheck,
@@ -500,9 +507,47 @@ async function runUpgradeOnce({
   }
 }
 
+async function checkInventoryIcons(page, rl) {
+  let frame = null;
+  try {
+    frame = await withTimeout(getUpgradeFrame(page, rl), 8 * 60_000, "mở mini-app để kiểm tra kho");
+    let cards = await withTimeout(
+      readUpgradeTargetCards(frame),
+      60_000,
+      "đọc số icon trong kho"
+    );
+    if (!cards.length) {
+      const reloaded = await reloadUpgradeTargetList(
+        frame,
+        page,
+        config.upgradeFrameTimeoutSeconds * 1_000
+      );
+      if (!reloaded) {
+        throw Object.assign(
+          new Error(
+            "Mini-app chưa xác nhận tải lại danh sách kho; không thể kết luận kho hết icon."
+          ),
+          { code: "INVENTORY_READ_UNCONFIRMED" }
+        );
+      }
+      cards = await withTimeout(
+        readUpgradeTargetCards(frame),
+        60_000,
+        "đọc lại số icon trong kho"
+      );
+    }
+    const count = countInventoryIcons(cards);
+    log(`Kiểm tra kho trước khi chạy: còn ${count} icon.`);
+    return count;
+  } finally {
+    if (frame) await closeMiniApp(page).catch(() => {});
+  }
+}
+
 module.exports = {
   waitForUpgradeStartAck,
   waitForUpgradeCompletion,
   stopUpgradeWorker,
+  checkInventoryIcons,
   runUpgradeOnce
 };

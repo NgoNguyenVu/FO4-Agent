@@ -303,24 +303,45 @@ async function getTradeFrame(page, rl) {
   }
 }
 
-async function configureCycle(frame, quantity) {
-  const fields = frame.getByRole("spinbutton");
-  const price = frame.getByRole("textbox");
-  if ((await fields.count()) < 4 || (await price.count()) !== 1) {
-    throw new Error("Không nhận diện được các trường cấu hình trong mini-app.");
-  }
-  await fields.nth(0).fill(String(config.ovrMin));
-  await fields.nth(1).fill(String(config.ovrMax));
-  await price.fill(String(config.maxPriceBP));
-  await fields.nth(2).fill(String(config.quantityPerAttempt));
-  await fields.nth(3).fill(String(quantity));
-  const actual = {
+async function readCycleConfiguration(fields, price) {
+  return {
     ovrMin: Number(await fields.nth(0).inputValue()),
     ovrMax: Number(await fields.nth(1).inputValue()),
     maxPriceBP: parseBp(await price.inputValue()),
     quantityPerAttempt: Number(await fields.nth(2).inputValue()),
     maxPerCycle: Number(await fields.nth(3).inputValue())
   };
+}
+
+async function configureCycle(frame, quantity) {
+  const fields = frame.getByRole("spinbutton");
+  const price = frame.getByRole("textbox");
+  if ((await fields.count()) < 4 || (await price.count()) !== 1) {
+    throw new Error("Không nhận diện được các trường cấu hình trong mini-app.");
+  }
+  const values = [
+    [fields.nth(0), config.ovrMin],
+    [fields.nth(1), config.ovrMax],
+    [fields.nth(2), config.quantityPerAttempt],
+    [fields.nth(3), quantity]
+  ];
+  for (const [field, value] of values) {
+    await field.fill("");
+    await field.fill(String(value));
+  }
+  await price.fill("");
+  await price.fill(String(config.maxPriceBP));
+
+  let actual = await readCycleConfiguration(fields, price);
+  if (actual.maxPriceBP !== config.maxPriceBP) {
+    // Một số bản mini-app giữ phần giá cũ khi re-render ô BP. Chọn toàn bộ
+    // rồi xóa trước khi ghi lại một lần nữa, sau đó vẫn phải đọc xác minh.
+    await price.click();
+    await price.press("Control+A");
+    await price.press("Backspace");
+    await price.fill(String(config.maxPriceBP));
+    actual = await readCycleConfiguration(fields, price);
+  }
   if (
     actual.ovrMin !== config.ovrMin ||
     actual.ovrMax !== config.ovrMax ||

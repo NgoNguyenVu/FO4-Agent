@@ -25,23 +25,26 @@ const config = {
     ...(rawConfig.upgrade || {})
   },
   // Luồng /starticon: mỗi lần gọi chọn ngẫu nhiên 1 cầu thủ ICON trong danh sách
-  // yêu thích "Tra cứu mã cầu thủ offline", mua +1/1, rồi kết thúc (không lặp).
-  // Vị trí mua > ngưỡng hoặc không lấy được vị trí sẽ được hủy qua tab TTCN.
+  // yêu thích "Tra cứu mã cầu thủ offline", mua +1/1. Khi có slot trống thì
+  // mua bù đủ 3 task; chỉ vị trí mua > ngưỡng mới được hủy qua tab TTCN.
   iconBuy: {
     // Mỗi lượt gửi tối đa 3 mã (giới hạn của bot). Số mã thực tế được chọn
     // bằng số slot MUA còn trống, để luôn mua bù đủ maxTaskSlots.
     maxPlayersPerBatch: 3,
     grade: 1,
     quantity: 1,
-    cancelPositionAbove: 5,
+    cancelPositionAbove: 3,
     menuTimeoutSeconds: 45,
     favoritesTimeoutSeconds: 60,
-    purchaseTimeoutSeconds: 3600,
+    // 0 = theo dõi không giới hạn; task chỉ kết thúc khi stopagent/resetagent
+    // hoặc bot trả lỗi không thể tiếp tục.
+    purchaseTimeoutSeconds: 0,
     ttcnTimeoutSeconds: 60,
     batchIntervalSeconds: 2,
     // Chạy tuần hoàn: sau khi hủy đơn, mua bù lại slot; khi đủ slot thì chờ.
     // Đặt false để giữ hành vi one-shot cũ (dừng sau maxBatchesPerRun).
     continuous: true,
+    monitorExistingOrders: true,
     slotPollSeconds: 15,
     maxBatchesPerRun: 1,
     captureTtcnBaseline: true,
@@ -138,7 +141,7 @@ function validateIconBuyConfig() {
   requirePositiveInteger(s.cancelPositionAbove, "iconBuy.cancelPositionAbove");
   requirePositiveInteger(s.menuTimeoutSeconds, "iconBuy.menuTimeoutSeconds");
   requirePositiveInteger(s.favoritesTimeoutSeconds, "iconBuy.favoritesTimeoutSeconds");
-  requirePositiveInteger(s.purchaseTimeoutSeconds, "iconBuy.purchaseTimeoutSeconds");
+  requireNonNegativeInteger(s.purchaseTimeoutSeconds, "iconBuy.purchaseTimeoutSeconds");
   requirePositiveInteger(s.ttcnTimeoutSeconds, "iconBuy.ttcnTimeoutSeconds");
   requireNonNegativeInteger(s.batchIntervalSeconds, "iconBuy.batchIntervalSeconds");
   requirePositiveInteger(s.slotPollSeconds, "iconBuy.slotPollSeconds");

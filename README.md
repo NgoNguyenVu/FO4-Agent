@@ -27,15 +27,15 @@ Both the Web K `@username` hash and the Web A numeric chat ID
 - Target re-check after the upgrade starts: 60 seconds, then every 120 seconds
 - Maximum cycle wait: 180 minutes
 - ICON favorites: one random code per `/starticon`, grade +1, quantity 1; cancel
-  orders placed at position > 5 or when the position is unknown (including E004)
-  through `Auto Mua Phôi` -> `Gỡ cầu thủ TTCN`
+  only orders with a confirmed position > 3 through `Auto Mua Phôi` ->
+  `Gỡ cầu thủ TTCN`
 - ICON task slots: `iconBuy.maxTaskSlots` (3). The agent counts running `MUA`
   tasks from the `/stop` baseline and only places a new ICON task while slots
   remain. With a manual task using 1/3, `/starticon` uses the remaining 2/3.
-- ICON purchase wait: `iconBuy.purchaseTimeoutSeconds` (3600 seconds). Buys can
-  take 1-2 hours (price validation + placement), so the wait stays generous; the
-  new ICON task is only stopped if the bot has not logged a placed order by then
-  and TTCN is checked once more before the session ends.
+- ICON purchase wait: `iconBuy.purchaseTimeoutSeconds` (`0` means unlimited; a
+  positive value sets a maximum in seconds). Buys can take 2-3 hours while the
+  bot monitors price; the agent keeps the task and does not send a duplicate
+  purchase. Unknown position/E004 is never canceled.
 - Seasons and upgrade-grade selections: left as selected in the mini-app
 
 Each new cycle uses the configured maximum quantity. The agent does not impose
@@ -108,6 +108,9 @@ of treating the missing mini-app as a slow load.
    `Đã nhận ... cầu thủ trong kho mua. Tiếp tục mua...` before issuing the
    next action. The master mode then upgrades; buy-only mode starts the next
    purchase cycle.
+   If the acknowledgement is not observed before the configured timeout, the
+   agent logs a warning and stops safely without issuing the next action; it
+   does not treat the inventory as confirmed.
    If a target cannot reach the configured grade with the currently available
    materials, it is temporarily skipped by both upgrade modes and retried in a
    later upgrade phase after more materials are purchased. It is not persisted
@@ -339,6 +342,9 @@ and rotate its keys if they ever appear in git history.
 
 ## Vòng `/startagent` (đầy kho -> nâng -> mua)
 
+- Trước mỗi lượt mua hoặc nâng, agent mở danh sách kho và đếm các icon khác
+  nhau. Nếu kho không còn icon nào, `/startagent` dừng về idle và chờ lệnh mới;
+  nếu còn icon, flow mua/nâng tiếp tục như bình thường.
 - Kho/TTCN đầy -> chuyển sang phase nâng.
 - Còn target -> nâng tiếp; target thiếu phôi (`possible` < yêu cầu) bị đưa vào
   danh sách đen tạm thời và thử target khác.
@@ -360,14 +366,13 @@ and rotate its keys if they ever appear in git history.
 - Chọn ngẫu nhiên các mã chưa có task chạy, gửi `Chèn Member Thường` ->
   `Mua cầu thủ` với các dòng `<Mã> 1 1`. Trước khi gửi, agent chụp baseline menu
   `/stop` (chờ tối đa `iconBuy.menuTimeoutSeconds`, mặc định 45 giây) và baseline
-  TTCN. Nếu hết thời gian chờ, nhận `/stopagent` hoặc lỗi sau khi đã gửi lệnh,
-  agent chỉ bấm đúng task `THƯỜNG • MUA` mới khớp mã + grade + quantity (không
-  bấm nút dừng toàn bộ, không đụng task có trong baseline) rồi kiểm tra TTCN để
-  hủy đơn vừa xuất hiện. Nếu không đọc được baseline menu `/stop`, phiên
-  **không đặt mua** và báo lỗi `no-task-baseline`; nếu không đọc được menu lúc
-  dọn task, phiên báo lỗi cleanup thay vì coi như đã sạch.
-- Sau khi hủy đơn vị trí xấu, agent dừng đúng task của các mã vừa hủy để nhả
-  slot rồi lặp lại vòng mua bù. Khi đang đủ 3/3 slot, phiên chờ
+  TTCN. `/stop` chỉ đọc số lượng task, tuyệt đối không bấm dừng/hủy task nào.
+  Nếu `/startagent` hoặc luồng khác đang ghi chat làm mất một lần đọc baseline
+  `/stop`, phiên ICON sẽ retry tối đa 3 lần rồi giữ nguyên phiên và chờ nhịp
+  tiếp theo; không đặt thêm task khi chưa đọc chắc số slot. Sau khi hủy đơn vị
+  trí xấu, task tự được tính lại ở vòng `/stop` tiếp theo; không dùng `/stop`
+  để dừng task.
+- Khi đang đủ 3/3 slot, phiên chờ
   `iconBuy.slotPollSeconds` (mặc định 15 giây) rồi kiểm tra `/stop` lại; task
   nào xong/hủy sẽ được mua bù. Đặt `iconBuy.continuous: false` để quay lại hành
   vi one-shot cũ (dừng sau `maxBatchesPerRun`).
@@ -381,14 +386,21 @@ and rotate its keys if they ever appear in git history.
 - Đọc log `Đã đặt mua thành công ... Vị trí mua: N`; chỉ nhận log khớp đúng
   mã + grade + số lượng của phiên ICON (`1/1`), để log của Auto Mua đang chạy
   song song với cùng mã nhưng khác grade/số lượng không bị xử lý nhầm. Nếu
-  `N > 5` **hoặc không lấy được vị trí** (kể cả `E004`), mở `Auto Mua Phôi` ->
+  `N > 3`, mở `Auto Mua Phôi` ->
   `Gỡ cầu thủ TTCN`, chờ danh sách tải xong, chọn đúng đơn mới (đối chiếu
-  `data-orderid` baseline) rồi bấm `Hủy`. Chỉ giữ đơn khi biết chắc `N <= 5`.
+  `data-orderid` baseline) rồi bấm `Hủy`. Nếu không đọc được `N`, giữ nguyên
+  đơn và không hủy.
+- Đơn ICON được agent theo dõi không giới hạn mặc định
+  (`iconBuy.purchaseTimeoutSeconds = 0`). Trong thời gian này agent giữ
+  nguyên task, không gửi mua lại; mỗi phút ghi heartbeat. Khi bot xác nhận
+  vị trí `N > 3`, agent mới mở TTCN để hủy đúng đơn.
+- Khi `/starticon` mở lại trong lúc đã có 1-3 task MUA, agent nhận diện các task
+  hiện có, chờ log kết quả/vị trí của chúng, rồi chỉ mua bù đúng số slot đã trống.
 - Gặp lỗi, hoặc nhận `/stopagent`/`/resetagent` thì phiên ICON dừng ở bước an
-  toàn kế tiếp; nếu đã đặt đơn ở vị trí xấu, nó vẫn cố hủy qua TTCN trước khi
-  kết thúc. Chế độ này chỉ gửi `/stop` để đọc menu và bấm đúng task
-  `THƯỜNG • MUA` mới của chính nó; không bấm `Dừng tất cả`, không dừng worker
-  Auto Mua/Auto Nâng có sẵn. `/stopagent` dừng cả luồng mua/nâng chính và phiên
+  toàn kế tiếp; chỉ đơn có vị trí xác nhận lớn hơn 3 mới được hủy qua TTCN.
+  Chế độ này chỉ gửi `/stop` để đọc menu; không bấm bất kỳ nút dừng/hủy nào,
+  không dừng worker Auto Mua/Auto Nâng có sẵn. `/stopagent` dừng cả luồng
+  mua/nâng chính và phiên
   ICON nền.
 
 ## Recovery chuẩn

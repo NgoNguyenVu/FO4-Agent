@@ -69,7 +69,8 @@ const {
 } = require("./buy");
 const {
   runSingleUpgrade,
-  pivotMasterToUpgrade
+  pivotMasterToUpgrade,
+  checkInventoryIcons
 } = require("./upgrade");
 const { runIconBuy } = require("./icon-buy");
 
@@ -199,7 +200,16 @@ async function main() {
       ui
     });
     if (next.pivotToUpgrade) {
-      const pivot = await pivotMasterToUpgrade(page, rl, runSingleUpgrade, log, ui);
+      const pivot = await pivotMasterToUpgrade(
+        page,
+        rl,
+        async (...args) => {
+          if (!(await checkMasterInventory())) return { action: "no-inventory" };
+          return runSingleUpgrade(...args);
+        },
+        log,
+        ui
+      );
       agentActive = pivot.agentActive;
       if (pivot.mode && pivot.mode !== "icon") mode = pivot.mode;
       return false;
@@ -207,6 +217,21 @@ async function main() {
     agentActive = next.agentActive;
     if (next.mode && next.mode !== "icon") mode = next.mode;
     return next.openNext;
+  };
+
+  const checkMasterInventory = async () => {
+    await ui.acquire();
+    try {
+      const count = await checkInventoryIcons(page, rl);
+      if (count === 0) {
+        agentActive = false;
+        log("Kho không còn icon; dừng /startagent và chờ lệnh mới.");
+        return false;
+      }
+      return true;
+    } finally {
+      ui.release();
+    }
   };
 
   ({ context, page } = await openTelegramPage(context, page));
@@ -429,6 +454,9 @@ async function main() {
       const units = config.maxPerCycle;
       const systemErrorCountBeforeMenu = countBotSystemErrors(reader.snapshot().text);
       log("Đang kiểm tra menu Auto Mua Phôi và mini-app cho chu kỳ tiếp theo.");
+      if (mode === "master" && !(await checkMasterInventory())) {
+        continue;
+      }
       let startAckBaseline;
       let cycleBaselineBeforeStart;
       // Mở/điền/bấm bắt đầu phải trọn gói dưới khóa UI để phiên ICON nền không

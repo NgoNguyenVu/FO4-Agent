@@ -491,6 +491,20 @@ function summarizeUpgradeTargetCards(cards, targetGrade) {
   return summary;
 }
 
+function countInventoryIcons(cards) {
+  const seen = new Set();
+  let count = 0;
+  for (const card of cards) {
+    const idMatch = card.text.match(/_id:\s*([0-9a-f]+)/i);
+    if (!idMatch) continue;
+    const id = idMatch[1].toLowerCase();
+    if (seen.has(id) || !(card.imgSrcs || []).some(isIconSeasonBadge)) continue;
+    seen.add(id);
+    count += 1;
+  }
+  return count;
+}
+
 // Sau khi tải lại kho, danh sách được coi là đã cạn target khi không còn thẻ
 // ICON nào dưới target và cũng không có thẻ nào đang bị khóa/training. Điều kiện
 // "không có thẻ khóa" rất quan trọng: trong lúc worker đang nâng, backend có thể
@@ -618,6 +632,7 @@ module.exports = {
   getOrphanUpgradeOutcome,
   parseUpgradeTargetCards,
   summarizeUpgradeTargetCards,
+  countInventoryIcons,
   parseOvrList,
   parseSelectedPhoiOvrs,
   verifyUpgradeFinalUi,

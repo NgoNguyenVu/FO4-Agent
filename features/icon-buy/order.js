@@ -150,8 +150,7 @@ async function openMemberBuyPrompt(page, rl) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
 
-  const memberButton = await ensureFeatureButton(page, rl, "Chèn Member Thường");
-  await clickFeatureButton(page, rl, "Chèn Member Thường", { button: memberButton });
+  await clickFeatureButton(page, rl, "Chèn Member Thường");
   log("Đã mở menu Chèn Member Thường.");
 
   const buyButton = await waitForBuyMenuButton(page);
@@ -203,7 +202,9 @@ async function waitForPurchaseResults(
   baselineIds = null,
   { isStopRequested = null } = {}
 ) {
-  const deadline = Date.now() + config.iconBuy.purchaseTimeoutSeconds * 1_000;
+  const deadline = config.iconBuy.purchaseTimeoutSeconds > 0
+    ? Date.now() + config.iconBuy.purchaseTimeoutSeconds * 1_000
+    : Infinity;
   let successes = [];
   let latestText = reader.snapshot().text;
   // Chỉ reset đồng hồ im lặng khi dữ liệu của chính các mã ICON thay đổi.
@@ -213,6 +214,8 @@ async function waitForPurchaseResults(
   let lastFresh = "";
   let fatalError = null;
   let fatalStopAt = Infinity;
+  const waitStartedAt = Date.now();
+  let nextHeartbeatAt = waitStartedAt + 60_000;
 
   while (Date.now() < deadline) {
     if (typeof isStopRequested === "function" && isStopRequested()) {
@@ -236,6 +239,20 @@ async function waitForPurchaseResults(
     }
     if (!fresh) fresh = getFreshSince(baselineText, latestText) || "";
     if (fresh) lastFresh = fresh;
+    if (Date.now() >= nextHeartbeatAt) {
+      const elapsedMinutes = Math.floor((Date.now() - waitStartedAt) / 60_000);
+      const remainingMinutes = Number.isFinite(deadline)
+        ? Math.max(0, Math.ceil((deadline - Date.now()) / 60_000))
+        : null;
+      log(
+        `Đang chờ bot hoàn tất đơn ICON (${elapsedMinutes} phút đã chờ, ` +
+          (remainingMinutes == null
+            ? "không giới hạn thời gian"
+            : `còn tối đa ${remainingMinutes} phút`) +
+          "); không gửi mua lại."
+      );
+      nextHeartbeatAt = Date.now() + 60_000;
+    }
     // Auto Mua có thể đang chạy song song và cũng ghi log "Đã đặt mua thành
     // công"; chỉ nhận log khớp đúng mã + grade + số lượng của lượt ICON này.
     // Nếu chỉ lọc theo mã, log +1 x3 của Auto Mua cùng mã sẽ bị coi là đơn ICON
@@ -330,7 +347,8 @@ async function waitForPurchaseResults(
   if (missing.length) {
     log(
       `Chưa thấy log đặt mua cho ${missing.map((p) => p.code).join(", ")} ` +
-        `sau ${config.iconBuy.purchaseTimeoutSeconds}s. Đuôi chat: ${shorten(lastFresh)}`
+        `sau ${config.iconBuy.purchaseTimeoutSeconds || "không giới hạn"}s. ` +
+        `Đuôi chat: ${shorten(lastFresh)}`
     );
   }
   return { successes, missing, fresh: lastFresh, fatalError };

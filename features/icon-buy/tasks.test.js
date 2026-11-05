@@ -27,6 +27,10 @@ test("stop-menu task buttons are parsed into code, grade, quantity and id", () =
   );
   assert.equal(parseStopTaskButton("Dừng tất cả"), null);
   assert.equal(parseStopTaskButton("THƯỜNG • MUA | 101214101 +1 #8849"), null);
+  assert.equal(
+    parseStopTaskButton("THƯỜNG • MUA | 101214101 +1 x1 #8849 đang chạy")?.taskId,
+    "8849"
+  );
   assert.deepEqual(
     parseStopTaskButtons([
       "Dừng tất cả",
@@ -71,6 +75,39 @@ test("countRunningTaskSlots counts only MUA tasks and ignores other kinds", () =
   assert.equal(countRunningTaskSlots(null, "MUA"), 0);
 });
 
+test("countRunningTaskSlots counts distinct MUA rows even when callback ids repeat", () => {
+  assert.equal(
+    countRunningTaskSlots([
+      { kind: "MUA", code: "101247703", grade: 1, quantity: 1, taskId: "8597" },
+      { kind: "MUA", code: "101005471", grade: 1, quantity: 1, taskId: "8597" }
+    ], "MUA"),
+    2
+  );
+});
+
+test("baseline identity does not collapse repeated callback ids", () => {
+  const baseline = {
+    taskKeys: new Set([
+      "MUA:101247703:1:1:8597",
+      "MUA:101005471:1:1:8597"
+    ])
+  };
+  assert.deepEqual(
+    findNewPurchaseTasks(
+      [
+        { kind: "MUA", code: "101247703", grade: 1, quantity: 1, taskId: "8597" },
+        { kind: "MUA", code: "101005471", grade: 1, quantity: 1, taskId: "8597" },
+        { kind: "MUA", code: "101167680", grade: 1, quantity: 1, taskId: "8597" }
+      ],
+      baseline,
+      [{ code: "101167680" }],
+      1,
+      1
+    ).map((task) => task.code),
+    ["101167680"]
+  );
+});
+
 test("available task slots fill the bot limit: 1/3 running means 2 more", () => {
   const oneRunning = [{ kind: "MUA", taskId: "1000" }];
   assert.equal(getAvailableTaskSlots(oneRunning, 3), 2);
@@ -88,6 +125,16 @@ test("available task slots fill the bot limit: 1/3 running means 2 more", () => 
   );
   // Task BÁN không chiếm slot mua.
   assert.equal(getAvailableTaskSlots([{ kind: "BÁN", taskId: "8974" }], 3), 3);
+});
+
+test("available task slots fill only the missing amount: 2/3 means 1 more", () => {
+  assert.equal(
+    getAvailableTaskSlots([
+      { kind: "MUA", taskId: "1000" },
+      { kind: "MUA", taskId: "1001" }
+    ], 3),
+    1
+  );
 });
 
 test("E003/no-running reply is a valid empty /stop baseline", () => {

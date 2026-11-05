@@ -301,13 +301,25 @@ async function cancelOneOrder(frame, order) {
 // khi đặt mua; nếu null thì phải chọn card cuối khớp mã và log cảnh báo.
 async function cancelIconOrders(page, rl, successes, baselineIds = null) {
   const results = { canceled: [], failed: [], notFound: [] };
+  const cancelable = (successes || []).filter((success) => {
+    const position = Number(success?.position);
+    return Number.isFinite(position) &&
+      position > Number(config.iconBuy.cancelPositionAbove);
+  });
+  for (const success of (successes || []).filter((item) => !cancelable.includes(item))) {
+    log(
+      `Bỏ qua hủy TTCN ${success?.code || "không rõ"}: ` +
+        "chưa xác nhận vị trí xấu; không hủy trong bước kiểm tra /stop."
+    );
+  }
+  if (!cancelable.length) return results;
   let frame = null;
   try {
     frame = await openTtcnList(page, rl);
     let orders = await readTtcnOrders(frame);
     const knownIds = baselineIds ? new Set(baselineIds) : null;
 
-    for (const success of successes) {
+    for (const success of cancelable) {
       let order = selectOrderToCancel(orders, success, knownIds);
       if (!order) {
         // API TTCN có thể cập nhật chậm sau khi bot báo đặt mua thành công.
@@ -330,6 +342,7 @@ async function cancelIconOrders(page, rl, successes, baselineIds = null) {
         );
         continue;
       }
+      success.orderId = order.orderId;
       log(
         `Đang hủy đơn TTCN ${success.code} (orderId ${order.orderId}, ` +
           `grade ${order.grade}, giá ${order.priceText}).`
