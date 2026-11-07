@@ -13,6 +13,14 @@ const {
   makeFlowError
 } = require("./menu");
 const {
+  openTtcnList,
+  readTtcnOrders
+} = require("./ttcn");
+const {
+  closeMiniApp,
+  inspectPaymentFrames
+} = require("../telegram-io");
+const {
   buildPurchaseLines,
   parsePurchaseSuccesses,
   filterIconPurchaseSuccesses,
@@ -200,7 +208,7 @@ async function waitForPurchaseResults(
   baselineText,
   players,
   baselineIds = null,
-  { isStopRequested = null } = {}
+  { isStopRequested = null, ttcnBaselineIds = null, ui = null, rl = null } = {}
 ) {
   const deadline = config.iconBuy.purchaseTimeoutSeconds > 0
     ? Date.now() + config.iconBuy.purchaseTimeoutSeconds * 1_000
@@ -216,6 +224,46 @@ async function waitForPurchaseResults(
   let fatalStopAt = Infinity;
   const waitStartedAt = Date.now();
   let nextHeartbeatAt = waitStartedAt + 60_000;
+  let nextTtcnCheckAt = waitStartedAt + 15_000;
+
+  const readTtcnMatches = async () => {
+    if (!ttcnBaselineIds) return [];
+    const frameState = await inspectPaymentFrames(page).catch(() => null);
+    if (frameState?.count > 0 && frameState.visible) return [];
+    const read = async () => {
+      let frame = null;
+      try {
+        frame = await openTtcnList(page, rl);
+        const orders = await readTtcnOrders(frame);
+        const knownIds = new Set(ttcnBaselineIds);
+        return orders
+          .filter(
+            (order) =>
+              order.orderId &&
+              !knownIds.has(order.orderId) &&
+              Number(order.orderType) === 1 &&
+              /Hủy/i.test(String(order.action || "")) &&
+              players.some(
+                (player) =>
+                  String(order.spid) === String(player.code) &&
+                  Number(order.grade) === Number(config.iconBuy.grade)
+              )
+          )
+          .map((order) => ({
+            code: String(order.spid),
+            grade: Number(order.grade),
+            price: order.priceText || "",
+            quantity: Number(config.iconBuy.quantity),
+            total: Number(config.iconBuy.quantity),
+            position: null,
+            positionError: "TTCN"
+          }));
+      } finally {
+        if (frame) await closeMiniApp(page, "mini-app Auto Mua").catch(() => {});
+      }
+    };
+    return ui ? ui.withLock(read) : read();
+  };
 
   while (Date.now() < deadline) {
     if (typeof isStopRequested === "function" && isStopRequested()) {
@@ -252,6 +300,20 @@ async function waitForPurchaseResults(
           "); không gửi mua lại."
       );
       nextHeartbeatAt = Date.now() + 60_000;
+    }
+    if (Date.now() >= nextTtcnCheckAt) {
+      nextTtcnCheckAt = Date.now() + 30_000;
+      const ttcnMatches = await readTtcnMatches().catch((error) => {
+        log(`Không đọc được TTCN để xác nhận đơn ICON: ${error.message}`);
+        return [];
+      });
+      if (ttcnMatches.length) {
+        successes = mergePurchaseSuccesses(successes, ttcnMatches);
+        log(
+          `Đã xác nhận ${ttcnMatches.length} đơn ICON trực tiếp trên TTCN ` +
+            "(không phụ thuộc thông báo chat)."
+        );
+      }
     }
     // Auto Mua có thể đang chạy song song và cũng ghi log "Đã đặt mua thành
     // công"; chỉ nhận log khớp đúng mã + grade + số lượng của lượt ICON này.
@@ -354,7 +416,12 @@ async function waitForPurchaseResults(
   return { successes, missing, fresh: lastFresh, fatalError };
 }
 
-async function placeIconOrders(page, rl, players, { ui = null, isStopRequested = null } = {}) {
+async function placeIconOrders(
+  page,
+  rl,
+  players,
+  { ui = null, isStopRequested = null, ttcnBaselineIds = null } = {}
+) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
   if (!players.length) return { successes: [], missing: [], fresh: "" };
@@ -377,7 +444,7 @@ async function placeIconOrders(page, rl, players, { ui = null, isStopRequested =
       baseline.text,
       players,
       baselineIds,
-      { isStopRequested }
+      { isStopRequested, ttcnBaselineIds, ui, rl }
     );
   } catch (error) {
     // Đã gửi lệnh mua thì không được thử lại mù: retry có thể tạo thêm task

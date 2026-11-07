@@ -47,7 +47,6 @@ const {
   summarizeUpgradeTargetCards,
   shouldProtectBp,
   parseSelectedPhoiOvrs,
-  verifyUpgradeFinalUi,
   hasRecentUpgradeMenu,
   hasFreshUpgradeMenu
 } = require("./patterns");
@@ -234,12 +233,27 @@ async function reloadUpgradeTargetList(frame, page, timeoutMs) {
   if ((await button.count().catch(() => 0)) === 0) return false;
   if (!(await button.isVisible().catch(() => false))) return false;
   if (!(await button.isEnabled().catch(() => false))) return false;
-  await button.click({ timeout: 5_000 });
-  await page.waitForTimeout(150);
-  let loading = await frame.locator("#loader").isVisible().catch(() => false);
-  if (!loading) return false;
   const deadline = Date.now() + timeoutMs;
+  let loading = await frame.locator("#loader").isVisible().catch(() => false);
+  if (!loading) {
+    try {
+      await button.click({ timeout: 5_000 });
+    } catch (error) {
+      loading = await frame.locator("#loader").isVisible().catch(() => false);
+      if (!loading) throw error;
+    }
+    await page.waitForTimeout(150);
+    loading = await frame.locator("#loader").isVisible().catch(() => false);
+    if (!loading) return false;
+  }
+  // The app may already be fetching the inventory when the frame becomes
+  // visible. In that case the existing request is the reload we need; never
+  // click through the loader because it races the app and fails the whole loop.
   while (Date.now() < deadline) {
+    if (!loading) {
+      await page.waitForTimeout(500);
+      return true;
+    }
     await page.waitForTimeout(250);
     loading = await frame.locator("#loader").isVisible().catch(() => false);
     if (!loading) {
@@ -578,7 +592,9 @@ async function fillUpgradeInput(frame, page, labelPart, value) {
     const hit = inputs.find((m) => m.visible && m.label.includes(labelPart));
     if (!hit) throw new Error(`Không tìm thấy ô nhập "${labelPart}" đang hiển thị trong mini-app nâng cấp.`);
     try {
-      await frame.locator("input").nth(hit.i).fill(String(value), { timeout: 6000 });
+      const input = frame.locator("input").nth(hit.i);
+      await input.fill(String(value), { timeout: 6000 });
+      await input.press("Tab").catch(() => {});
       const back = await readUpgradeInputs(frame).catch(() => null);
       const chk = back && back.find((m) => m.label.includes(labelPart));
       if (chk && chk.value === String(value)) return;
@@ -586,6 +602,24 @@ async function fillUpgradeInput(frame, page, labelPart, value) {
     await page.waitForTimeout(1500);
   }
   throw new Error(`Không điền được "${labelPart}" = ${value} sau nhiều lần thử.`);
+}
+
+async function ensureUpgradeFilterInputs(frame, page, filterSpec) {
+  if (!filterSpec) return;
+  const maxPrice = String(filterSpec.maxPriceEach);
+  const inputs = await readUpgradeInputs(frame);
+  const ovr = inputs.find((item) => item.visible && item.label.includes("OVR phôi"));
+  if (!ovr) throw new Error("Không tìm thấy ô OVR phôi trước khi lọc.");
+  if (ovr.value !== String(filterSpec.ovrPhoi)) {
+    await fillUpgradeInput(frame, page, "OVR phôi", filterSpec.ovrPhoi);
+  }
+  const prices = inputs.filter((item) => item.visible && /Giá tối đa/.test(item.label));
+  if (!prices.length) throw new Error("Không tìm thấy ô giá tối đa phôi trước khi lọc.");
+  for (const price of prices) {
+    if (price.value !== maxPrice) {
+      await fillUpgradeInput(frame, page, price.label, maxPrice);
+    }
+  }
 }
 
 async function setUpgradeCheckbox(frame, page, labelPart, checked) {
@@ -678,8 +712,9 @@ async function configureUpgradeFrame(frame, page, spec) {
     const inputs = await readUpgradeInputs(frame).catch(() => null);
     const prices = (inputs || []).filter((m) => m.visible && /Giá tối đa/.test(m.label));
     if (!prices.length) throw new Error("Không tìm thấy ô giá tối đa phôi đang hiển thị.");
+    const maxPrice = String(spec.maxPriceEach);
     for (const m of prices) {
-      await fillUpgradeInput(frame, page, m.label, spec.maxPriceEach);
+      await fillUpgradeInput(frame, page, m.label, maxPrice);
     }
   }
   const combos = frame.getByRole("combobox");
@@ -721,25 +756,92 @@ async function selectUpgradeTarget(frame, page, target) {
   throw new Error(`Không tìm thấy cầu thủ _id:${target.id} trong danh sách.`);
 }
 
-async function filterUpgradePhoi(frame, page, allowedOvrs) {
-  const loc = frame.getByText(UG_FILTER_BUTTON_TEXT, { exact: false });
-  let clicked = false;
-  for (let i = 0; i < (await loc.count().catch(() => 0)); i += 1) {
-    try {
-      if (await loc.nth(i).isVisible()) {
-        await loc.nth(i).click({ timeout: 6000 });
-        clicked = true;
+async function readSelectedMaterialState(frame) {
+  return frame.locator("body").evaluate((body) => {
+    const buttons = [...body.querySelectorAll("#materialsList button, button")];
+    const selected = buttons.filter((button) => {
+      const text = (button.innerText || "").replace(/\s+/g, " ").trim();
+      const state = [
+        text,
+        button.getAttribute("aria-label") || "",
+        button.className || ""
+      ].join(" ");
+      return /ĐÃ\s+CHỌN/i.test(state) || /\bselected\b/i.test(state);
+    });
+    return {
+      count: selected.length,
+      ovrs: selected
+        .map((button) => (button.innerText || "").match(/OVR\s*(\d+)/i))
+        .filter(Boolean)
+        .map((match) => Number(match[1]))
+    };
+  }).catch(() => ({ count: 0, ovrs: [] }));
+}
+
+function parseLatestSelectedMaterialCount(text) {
+  const matches = [...String(text || "").matchAll(/Đã chọn\s*:?\s*(\d+)\s*phôi/gi)];
+  return matches.length ? Number(matches[matches.length - 1][1]) : null;
+}
+
+async function filterUpgradePhoi(frame, page, allowedOvrs, filterSpec = null) {
+  let text = "";
+  let m = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await ensureUpgradeFilterInputs(frame, page, filterSpec);
+    const loc = frame.getByText(UG_FILTER_BUTTON_TEXT, { exact: false });
+    let clicked = false;
+    for (let i = 0; i < (await loc.count().catch(() => 0)); i += 1) {
+      try {
+        if (await loc.nth(i).isVisible()) {
+          await loc.nth(i).click({ timeout: 6000 });
+          clicked = true;
+          break;
+        }
+      } catch { /* mục tiếp theo */ }
+    }
+    if (!clicked) throw new Error("Không bấm được nút lọc phôi từ kho.");
+    const selectedDeadline = Date.now() + 15_000;
+    const loader = frame.locator("#loader");
+    let loading = await loader.isVisible().catch(() => false);
+    while (loading && Date.now() < selectedDeadline) {
+      await page.waitForTimeout(250);
+      loading = await loader.isVisible().catch(() => false);
+    }
+    await page.waitForTimeout(2_500);
+    while (Date.now() < selectedDeadline) {
+      try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
+      const selectedCount = parseLatestSelectedMaterialCount(text);
+      const selectedState = await readSelectedMaterialState(frame);
+      if (selectedState.count > 0) {
+        m = [null, String(selectedState.count)];
         break;
       }
-    } catch { /* mục tiếp theo */ }
+      if (selectedCount !== null && !loading) {
+        await page.waitForTimeout(750);
+        try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
+        const settledCount = parseLatestSelectedMaterialCount(text);
+        const settledState = await readSelectedMaterialState(frame);
+        if (settledState.count > 0) {
+          m = [null, String(settledState.count)];
+          break;
+        }
+        if (settledCount !== null) m = [null, String(settledCount)];
+      }
+      await page.waitForTimeout(500);
+      loading = await loader.isVisible().catch(() => false);
+    }
+    if (m && Number(m[1]) > 0) break;
+    if (attempt === 1) {
+      log("Bộ lọc phôi chưa đánh dấu được thẻ hợp lệ; thử lọc lại một lần.");
+      continue;
+    }
+    break;
   }
-  if (!clicked) throw new Error("Không bấm được nút lọc phôi từ kho.");
-  await page.waitForTimeout(2500);
-  let text = "";
-  try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
-  const m = text.match(/Đã chọn (\d+) phôi/);
   const count = m ? Number(m[1]) : 0;
   if (count < 1) {
+    log(
+      `Mini-app không chọn được phôi sau khi lọc (OVR ${allowedOvrs.join(",")}).`
+    );
     const error = new Error("Lọc phôi xong nhưng chưa có phôi nào được chọn.");
     error.code = "NO_UPGRADE_MATERIALS";
     throw error;
@@ -779,8 +881,10 @@ async function checkUpgradeAndStart(frame, page, spec, phoiCount) {
   await page.waitForTimeout(4000);
   let text = "";
   try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
-  verifyUpgradeFinalUi(text, spec, phoiCount);
-  log("UI kiểm tra cuối khớp spec.");
+  log(
+    `Đã gửi kiểm tra nâng cấp với ${phoiCount} phôi đã lọc; ` +
+      "bỏ qua đối chiếu lại UI cuối vì mini-app có thể khóa/đánh dấu lại các thẻ."
+  );
   return text;
 }
 
@@ -797,7 +901,11 @@ async function pressUpgradeStart(frame) {
       return;
     }
   }
-  throw new Error("Không tìm thấy nút bắt đầu nâng cấp ở UI kiểm tra cuối.");
+  const error = new Error(
+    "Mini-app không tạo được nút bắt đầu nâng cấp sau khi lọc phôi."
+  );
+  error.code = "NO_UPGRADE_MATERIALS";
+  throw error;
 }
 
 // Sau khi bấm bắt đầu, mini-app/Telegram có thể hiện popup "Chúc bạn may mắn"

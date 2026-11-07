@@ -24,7 +24,7 @@ function hasIconMenuSignature(text) {
 
 function isIconSeason(season) {
   // Chỉ mùa "ICON" thuần được tính; các biến thể như ICONTM/ICONS MATCH/TKI
-  // không phải là ICON cho luồng /starticon.
+  // không phải là ICON cho lượt mua ICON.
   return ICON_SEASON_RE.test(String(season || ""));
 }
 
@@ -55,7 +55,7 @@ function parseFavoriteIconPlayers(text) {
 // Bot luôn nhận MứcThẻ và SốLượng theo từng dòng. Luồng ICON cố định +1/1
 // theo yêu cầu, không lấy mức thẻ đang có trong danh sách yêu thích.
 // Chỉ giữ mùa ICON thuần: ICONTM / ICONS MATCH / TKI không được tính là ICON
-// cho luồng /starticon.
+// cho lượt mua ICON.
 function buildPurchaseLines(players, grade = 1, quantity = 1) {
   return players
     .map((player) => `${player.code} ${grade} ${quantity}`)
@@ -63,7 +63,7 @@ function buildPurchaseLines(players, grade = 1, quantity = 1) {
 }
 
 // Chọn ngẫu nhiên không trùng. `exclude` dùng để tránh mua lại cùng mã trong
-// một phiên /starticon. Truyền rng (0..1) để test ổn định.
+// một lượt mua ICON. Truyền rng (0..1) để test ổn định.
 function selectRandomIconPlayers(players, limit, { exclude = new Set(), rng = Math.random } = {}) {
   const unique = [];
   const seen = new Set(exclude);
@@ -153,7 +153,7 @@ function getLatestBotError(text) {
 }
 
 // E007: tài khoản đã chạm giới hạn số lệnh mua đang chạy. Đây không phải lỗi
-// hạ tầng và không được vượt giới hạn; /starticon phải dừng ngay, không chờ
+// hạ tầng và không được vượt giới hạn; lượt mua ICON phải dừng ngay, không chờ
 // timeout mua và không đụng tới các lệnh đang chạy của Auto Mua.
 function isOrderLimitError(text) {
   return ORDER_LIMIT_RE.test(String(text || ""));
@@ -219,7 +219,22 @@ function selectOrderToCancel(orders, success, knownOrderIds = null) {
   return matches.at(-1);
 }
 
-function getPositionAction(success, threshold = 5) {
+// Chọn task MUA của phiên ICON hiện tại cần theo dõi qua TTCN: chỉ task đúng
+// kind MUA, cùng grade + quantity với phiên hiện tại (config.iconBuy) được monitor.
+// Tránh bám nhầm task MUA thủ công hoặc task của phiên/Auto Mua khác cùng
+// grade/quantity khi lượt mua ICON đang chờ kết quả đặt mua.
+function selectMonitoredIconTasks(tasks, { grade, quantity } = {}) {
+  const wantGrade = Number(grade);
+  const wantQuantity = Number(quantity);
+  return (tasks || []).filter(
+    (task) =>
+      task?.kind === "MUA" &&
+      Number(task?.grade) === wantGrade &&
+      Number(task?.quantity) === wantQuantity
+  );
+}
+
+function getPositionAction(success, threshold = 3) {
   if (
     success &&
     success.position !== null &&
@@ -234,8 +249,16 @@ function getPositionAction(success, threshold = 5) {
 
 // Chỉ hủy khi đọc được vị trí và vị trí vượt ngưỡng. Không hủy đơn chỉ vì
 // không đọc được vị trí.
-function shouldCancelIconOrder(success, threshold = 5) {
+function shouldCancelIconOrder(success, threshold = 3) {
   return Boolean(success) && getPositionAction(success, threshold) === "cancel";
+}
+
+// Quyết định thuần cho việc chọn đơn cần hủy qua TTCN: chỉ đơn có vị trí đã
+// xác nhận vượt ngưỡng (cancelPositionAbove) mới vào danh sách hủy. Đơn thiếu
+// vị trí/E004 hoặc ở dưới ngưỡng -> giữ nguyên, không hủy.
+function decideCancelTargets(successes, cancelPositionAbove) {
+  const list = Array.isArray(successes) ? successes : [];
+  return list.filter((success) => shouldCancelIconOrder(success, cancelPositionAbove));
 }
 
 module.exports = {
@@ -256,6 +279,8 @@ module.exports = {
   parseCompactBp,
   parseTtcnCardText,
   selectOrderToCancel,
+  selectMonitoredIconTasks,
   getPositionAction,
-  shouldCancelIconOrder
+  shouldCancelIconOrder,
+  decideCancelTargets
 };

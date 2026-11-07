@@ -23,6 +23,15 @@ const {
 } = require("../../lib/text-utils");
 const { countBotSystemErrors } = require("../../lib/bot-signals");
 
+// Một chu kỳ mua 14 cầu thủ không thể xong sau vài giây. Tin hoàn tất xuất
+// hiện quá sớm thường là tin cũ của chu kỳ trước bị Telegram/observer phát lại;
+// trước khi nhận, controller phải xác minh /stop để tránh mở chồng worker.
+const STALE_COMPLETION_GUARD_MS = 60_000;
+
+function isEarlyCompletion(outcome, elapsedMs) {
+  return outcome?.status === "completed" && elapsedMs < STALE_COMPLETION_GUARD_MS;
+}
+
 function isTradeFrameLoaded(text) {
   return !/Đang tải/i.test(text) && DISPLAYED_BP_RE.test(text);
 }
@@ -499,6 +508,8 @@ function hasFreshFeatureMenu(baselineText, currentText) {
 }
 
 module.exports = {
+  STALE_COMPLETION_GUARD_MS,
+  isEarlyCompletion,
   isTradeFrameLoaded,
   shouldRetryMiniAppBpLoad,
   shouldRetryMiniAppOpen,

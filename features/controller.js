@@ -37,7 +37,6 @@ const {
 const { config, validateConfig } = require("./config");
 const { log, logError } = require("./agent-log");
 const { createUiLock } = require("../lib/ui-lock");
-const { createIconSession } = require("./icon-session");
 const {
   promptWakeable,
   wakePendingPrompt,
@@ -65,7 +64,8 @@ const {
   getLatestStartedMarker,
   getLatestWorkerId,
   getLatestAutoBuyStatus,
-  getLatestActivityMarker
+  getLatestActivityMarker,
+  isEarlyCompletion
 } = require("./buy");
 const {
   runSingleUpgrade,
@@ -96,86 +96,75 @@ async function main() {
   let remoteResetRequested = false;
   let resetClosePromise = Promise.resolve();
   let agentActive = false;
-  let mode = null; // null=idle, "master"=mua+nâng, "buy"=chỉ mua, "nang"=chỉ nâng
+  let mode = null; // null=idle, "master"=mua+nâng; buy/nang chỉ là pivot nội bộ
   let upgradeBlockedTargetIds = new Set();
   let sessionUnavailable = false;
   let nextMenuAttemptAt = 0;
   // Khi bot chưa trả menu, giãn dần khoảng thử lại để không gửi /tn dồn dập.
   let menuBackoffSeconds = config.menuBusyRetrySeconds;
   let pendingBuyCompletion = null;
+  let initialWorkerCheckDone = false;
+  let inventoryKnownAvailable = false;
+  // Số lần bấm lại nút Bắt đầu khi bot lag làm mất ACK (không có worker chạy).
+  let startAckRetries = 0;
   // Đếm số lần mini-app trắng/không render để tự reload Telegram Web thay vì
   // dừng agent và bắt người dùng gửi /resetagent.
   let miniAppRecoveryAttempts = 0;
-  // /starticon chạy nền, dùng chung page/chat observer với luồng mua/nâng.
-  // Khóa UI bảo đảm hai luồng không mở/đóng mini-app hay gửi lệnh Telegram chen
-  // nhau; các đoạn chờ chat chỉ đọc sẽ nhả khóa.
   const ui = createUiLock();
+  let iconStopRequested = false;
+  let iconMonitor = null;
 
+  const stopIconMonitor = async (reason) => {
+    iconStopRequested = true;
+    if (!iconMonitor) return true;
+    const task = iconMonitor;
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(false), 45_000));
+    const stopped = await Promise.race([task.then(() => true), timeout]);
+    if (!stopped) {
+      log(`Luồng ICON chưa dừng sau 45s (${reason}); tiếp tục khôi phục an toàn.`);
+    }
+    return stopped;
+  };
+
+  const ensureIconMonitor = () => {
+    if (iconMonitor) return;
+    iconStopRequested = false;
+    iconMonitor = runIconBuy(page, rl, {
+      ui,
+      isStopRequested: () => iconStopRequested || remoteResetRequested
+    })
+      .then((result) => {
+        if (!iconStopRequested && result?.action !== "stop") {
+          log(
+            `Luồng ICON kết thúc (${result?.reason || result?.action || "không rõ"}); ` +
+              "sẽ tự khởi động lại ở nhịp kế tiếp."
+          );
+        }
+        return result;
+      })
+      .catch((error) => {
+        if (!iconStopRequested && !remoteResetRequested) {
+          logError(`Luồng ICON dừng do lỗi: ${error.stack || error.message}`);
+        }
+        return null;
+      })
+      .finally(() => {
+        iconMonitor = null;
+      });
+  };
   const rememberBuyCompletion = (outcome, source) => {
     const record = createBuyCompletionRecord(outcome, source);
     if (record) pendingBuyCompletion = record;
   };
 
-  const logIconResult = (result) => {
-    if (result.action === "stop") {
-      log("Phiên ICON nền đã dừng; worker Auto Mua/Auto Nâng (nếu có) giữ nguyên.");
-    } else if (result.action === "exhausted") {
-      log(
-        `Đã dùng hết cầu thủ ICON yêu thích trong phiên này ` +
-          `(${result.batches} lượt, ${result.purchased} đơn đặt mua, ${result.canceled} đơn đã hủy); ` +
-          "chờ lệnh mới."
-      );
-    } else if (result.action === "limit") {
-      log(
-        `Đã đạt giới hạn ${result.batches} lượt của phiên ICON ` +
-          `(${result.purchased} đơn đặt mua, ${result.canceled} đơn đã hủy); chờ lệnh mới.`
-      );
-    } else {
-      log(
-        `Phiên ICON dừng do lỗi (${result.reason || "không rõ"}) sau ${result.batches} lượt: ` +
-          `${result.purchased} đơn đặt mua, ${result.canceled} đơn đã hủy. ` +
-          "Kiểm tra TTCN trước khi gửi /starticon lại."
-      );
-    }
-  };
-
-  const iconSession = createIconSession({
-    runIconBuy,
-    ui,
-    log,
-    logError,
-    onResult: logIconResult
-  });
-
-  const startIconSession = () => {
-    if (sessionUnavailable || remoteResetRequested) {
-      log(
-        "Nhận /starticon nhưng Telegram Web đang được khôi phục; bỏ qua lệnh này, " +
-          "gửi lại sau khi agent READY."
-      );
-      return;
-    }
-    if (!page || (typeof page.isClosed === "function" && page.isClosed())) {
-      log("Nhận /starticon nhưng Telegram Web chưa sẵn sàng; bỏ qua lệnh này.");
-      return;
-    }
-    iconSession.start(page, rl);
-  };
-
   const handleControlCommand = (command) => {
-    // /starticon không đổi mode mua/nâng. Nó được mở ngay từ callback của chat
-    // observer để có thể chạy song song cả khi controller đang bận một chu kỳ.
-    if (command === "starticon") {
-      startIconSession();
-      return;
-    }
     if (command === "stopagent") {
-      iconSession.abort("/stopagent");
+      void stopIconMonitor("/stopagent");
       return;
     }
     if (command !== "resetagent" || remoteResetRequested) return;
-    iconSession.abort("/resetagent");
     remoteResetRequested = true;
+    void stopIconMonitor("/resetagent");
     agentActive = false;
     mode = null;
     upgradeBlockedTargetIds = new Set();
@@ -203,13 +192,11 @@ async function main() {
       const pivot = await pivotMasterToUpgrade(
         page,
         rl,
-        async (...args) => {
-          if (!(await checkMasterInventory())) return { action: "no-inventory" };
-          return runSingleUpgrade(...args);
-        },
+        async (...args) => runSingleUpgrade(...args),
         log,
         ui
       );
+      inventoryKnownAvailable = false;
       agentActive = pivot.agentActive;
       if (pivot.mode && pivot.mode !== "icon") mode = pivot.mode;
       return false;
@@ -220,18 +207,28 @@ async function main() {
   };
 
   const checkMasterInventory = async () => {
-    await ui.acquire();
-    try {
-      const count = await checkInventoryIcons(page, rl);
-      if (count === 0) {
-        agentActive = false;
-        log("Kho không còn icon; dừng /startagent và chờ lệnh mới.");
-        return false;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await ui.acquire();
+      let count;
+      try {
+        count = await checkInventoryIcons(page, rl);
+      } finally {
+        ui.release();
       }
-      return true;
-    } finally {
-      ui.release();
+      if (count > 0) return true;
+      if (attempt < 3) {
+        log(
+          `Chưa thấy ICON mới trong kho (lần ${attempt}/3); ` +
+            "chờ bot nhận cầu thủ rồi kiểm tra lại."
+        );
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+      }
     }
+    log(
+      "Chưa có ICON trong kho; giữ /startagent hoạt động và tiếp tục " +
+        "theo dõi TTCN cho tới khi một đơn được nhận."
+    );
+    return false;
   };
 
   ({ context, page } = await openTelegramPage(context, page));
@@ -246,17 +243,15 @@ async function main() {
   await waitForTextToSettle(reader, 1_500, 30_000, page);
   log("Agent READY");
   log(
-    "Đang chờ /startagent (tổng), /startmua (chỉ mua), /startnang (chỉ nâng), " +
-      "/starticon (mua ICON yêu thích), /stopagent hoặc /resetagent."
+    "Đang chờ /startagent (mua ICON → nhận → mua phôi → nâng), " +
+      "/stopagent hoặc /resetagent."
   );
 
   while (true) {
     const enteredActive = agentActive;
     try {
       if (sessionUnavailable) {
-        // Không để phiên ICON nền tiếp tục dùng page cũ trong lúc Telegram Web
-        // được mở lại; chờ tối đa 45s rồi khôi phục như cũ.
-        await iconSession.stopAndWait("khôi phục Telegram Web", 45_000);
+        // Khôi phục Telegram Web trên page mới; chờ tối đa 45s rồi tiếp tục.
         ({ context, page, reader } = await restoreTelegramSession(context, page, rl, handleControlCommand));
         sessionUnavailable = false;
       }
@@ -273,7 +268,7 @@ async function main() {
         if (command === "stopagent") {
           // /stopagent chỉ dừng worker mua do agent quản lý. Không dò hoặc
           // dừng worker nâng/chức năng khác mà người dùng đang chạy trực tiếp.
-          // Khóa UI vì phiên ICON nền có thể đang mở mini-app TTCN.
+          // Khóa UI cho các thao tác kiểm tra và dừng worker.
           const { restartRequested } = await ui.withLock(async () => {
             const currentStatus = await checkAutoBuyRunning(page, rl);
             let requested = null;
@@ -291,16 +286,6 @@ async function main() {
             }
             return { restartRequested: requested };
           });
-          if (restartRequested === "starticon") {
-            // Handler đã mở phiên ICON nền khi lệnh đến; không biến main mode
-            // thành icon và không chờ phiên ICON xong mới xử lý lệnh khác.
-            agentActive = false;
-            log(
-              "Đã nhận /starticon trong lúc dừng worker mua; phiên ICON chạy nền, " +
-                "agent chờ lệnh mua/nâng mới."
-            );
-            continue;
-          }
           agentActive = Boolean(restartRequested);
           if (agentActive) {
             mode = CONTROL_MODE_BY_COMMAND[restartRequested] || "master";
@@ -309,40 +294,17 @@ async function main() {
         }
         if (command === "startagent") {
           mode = "master";
+          initialWorkerCheckDone = false;
+          inventoryKnownAvailable = false;
           upgradeBlockedTargetIds = new Set();
           miniAppRecoveryAttempts = 0;
+          startAckRetries = 0;
           menuBackoffSeconds = config.menuBusyRetrySeconds;
           nextMenuAttemptAt = 0;
           agentActive = true;
-          log("Nhận /startagent; chạy vòng tổng mua+nâng (đầy kho -> nâng, xong -> mua tiếp).");
-          continue;
-        }
-        if (command === "startmua") {
-          mode = "buy";
-          miniAppRecoveryAttempts = 0;
-          menuBackoffSeconds = config.menuBusyRetrySeconds;
-          nextMenuAttemptAt = 0;
-          agentActive = true;
-          log("Nhận /startmua; chỉ chạy Auto Mua Phôi (đầy kho -> chờ lệnh).");
-          continue;
-        }
-        if (command === "startnang") {
-          mode = "nang";
-          upgradeBlockedTargetIds = new Set();
-          miniAppRecoveryAttempts = 0;
-          menuBackoffSeconds = config.menuBusyRetrySeconds;
-          nextMenuAttemptAt = 0;
-          agentActive = true;
-          log("Nhận /startnang; chỉ chạy Auto Nâng Cấp tới khi hết icon dưới target.");
-          continue;
-        }
-        if (command === "starticon") {
-          // Callback của chat observer đã mở phiên ICON nền ngay khi lệnh đến.
-          // Không đặt agentActive/mode để luồng mua/nâng hiện tại không bị thay.
           log(
-            (iconSession.isActive()
-              ? `Đã nhận /starticon; phiên ICON nền #${iconSession.activeId()} đang chạy song song với luồng mua/nâng (nếu có).`
-              : "Đã nhận /starticon; phiên ICON one-shot đã xử lý xong hoặc đang chờ khóa UI.")
+            "Nhận /startagent; giữ tối đa 3 task ICON chạy liên tục, " +
+              "có ICON trong kho thì chạy mua phôi và nâng."
           );
           continue;
         }
@@ -394,11 +356,16 @@ async function main() {
         continue;
       }
 
-      // --- ACTIVE: đồng bộ với worker mua đang chạy (nếu có, vòng buy/master) ---
+      // --- ACTIVE: đồng bộ với worker mua đang chạy ---
       // Nếu đã ghi nhận completion của chính worker mua, không gửi /stop lại
       // khi đang chờ menu. Tin chức năng khác có thể làm menu bị thay thế;
-      // gửi /stop lặp lại khi đó chỉ tạo E003 và spam chat.
-      if (!pendingBuyCompletion) {
+      // Ở nhịp đầu, runner ICON đã đọc /stop để lấy baseline task; chỉ gửi
+      // thêm /stop nếu chat đã cho thấy worker Auto Mua đang chạy.
+      if (
+        !pendingBuyCompletion &&
+        (initialWorkerCheckDone ||
+          getLatestAutoBuyStatus(reader.snapshot().text) === "running")
+      ) {
         const status = await ui.withLock(() => checkAutoBuyRunning(page, rl));
         if (status.running) {
           const adoptedWorker = getLatestWorkerId(status.baselineText) || "không rõ";
@@ -411,6 +378,7 @@ async function main() {
           );
           if (!openNext) continue;
         }
+        initialWorkerCheckDone = true;
       }
 
       // /stopagent đến ngay trước khi mở chu kỳ mới -> về idle, không mở mini-app.
@@ -420,13 +388,13 @@ async function main() {
         continue;
       }
 
-      // --- Mở 1 chu kỳ mua mới ---
+      // --- Xác minh worker cũ rồi chuẩn bị chu kỳ mới ---
       // Chốt chặn trước khi bấm bắt đầu: nếu /stop kiểm tra trước đó miss mà
       // thật ra worker vẫn chạy (activity mới hơn mọi terminal), KHÔNG bấm để
       // tránh mở chồng worker tốn BP thật. Nhưng cửa sổ chat có thể đang đậu ở
       // lịch sử cũ (user cuộn lên) khiến activity cũ trông như đang chạy dù bot
       // vừa báo E003 không có gì chạy — nên verify đuôi chat trước. Phần này chỉ
-      // đọc chat nên chạy trước khi chiếm khóa UI; phiên ICON nền vẫn được chạy.
+      // đọc chat nên chạy trước khi chiếm khóa UI.
       if (getLatestAutoBuyStatus(reader.snapshot().text) === "running") {
         const tailSnap = await verifyTailOrphan(page, reader);
         if (getLatestAutoBuyStatus(tailSnap.text) !== "running") {
@@ -453,14 +421,17 @@ async function main() {
 
       const units = config.maxPerCycle;
       const systemErrorCountBeforeMenu = countBotSystemErrors(reader.snapshot().text);
-      log("Đang kiểm tra menu Auto Mua Phôi và mini-app cho chu kỳ tiếp theo.");
-      if (mode === "master" && !(await checkMasterInventory())) {
+      ensureIconMonitor();
+      if (!inventoryKnownAvailable && !(await checkMasterInventory())) {
+        await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
         continue;
       }
+      inventoryKnownAvailable = true;
+      log("Đang kiểm tra menu Auto Mua Phôi và mini-app cho chu kỳ tiếp theo.");
       let startAckBaseline;
       let cycleBaselineBeforeStart;
-      // Mở/điền/bấm bắt đầu phải trọn gói dưới khóa UI để phiên ICON nền không
-      // đóng nhầm iframe hoặc chen lệnh vào composer.
+      let cycleStartedAt = 0;
+      // Mở/điền/bấm bắt đầu phải trọn gói dưới khóa UI để không chen lệnh.
       await ui.acquire();
       try {
         const frame = await getTradeFrame(page, rl);
@@ -494,11 +465,13 @@ async function main() {
           text: body
         };
         cycleBaselineBeforeStart = getCycleBaseline(body);
+        cycleStartedAt = Date.now();
         await withTimeout(startButton.click(), 60_000, "bấm Bắt đầu Auto Mua");
       } finally {
         ui.release();
       }
-      await waitForStartAcknowledgement(page, startAckBaseline);
+      await waitForStartAcknowledgement(page, startAckBaseline, rl, { ui });
+      startAckRetries = 0;
       const acknowledgedCycleText = reader.snapshot().text;
       const cycleBaseline = {
         ...cycleBaselineBeforeStart,
@@ -512,7 +485,43 @@ async function main() {
         pendingBuyCompletion = null;
         log("Đã bắt đầu lại chu kỳ mua; hoàn tất cũ đã được xử lý.");
       }
-      const outcome = await waitForCycleCompletion(page, cycleBaseline, acknowledgedCycleText);
+      let outcome = await waitForCycleCompletion(page, cycleBaseline, acknowledgedCycleText);
+      if (isEarlyCompletion(outcome, Date.now() - cycleStartedAt)) {
+        // Tin hoàn tất đến vài giây sau khi bắt đầu gần như chắc chắn là tin cũ
+        // bị phát lại. Xác minh bằng /stop: worker còn chạy thì bỏ qua tin cũ,
+        // tránh bấm thêm chu kỳ chồng lên worker đang mua thật.
+        const earlySeconds = Math.round((Date.now() - cycleStartedAt) / 1_000);
+        log(
+          `Bot báo hoàn tất chỉ ${earlySeconds}s sau khi bắt đầu; ` +
+            "kiểm tra /stop trước khi nhận kết quả để tránh tin hoàn tất cũ."
+        );
+        let earlyStatus = null;
+        try {
+          earlyStatus = await ui.withLock(() => checkAutoBuyRunning(page, rl));
+        } catch (error) {
+          log(
+            `Không xác minh được /stop cho tin hoàn tất sớm: ${error.message}; ` +
+              "chờ tiếp với mốc chat hiện tại, không bấm chu kỳ mới."
+          );
+          const snap = reader.snapshot();
+          outcome = await waitForCycleCompletion(
+            page,
+            getCycleBaseline(snap.text),
+            snap.text
+          );
+        }
+        if (earlyStatus?.running) {
+          log(
+            "Worker Auto Mua vẫn đang chạy; bỏ qua tin hoàn tất cũ và tiếp tục " +
+              "chờ chu kỳ thật."
+          );
+          outcome = await waitForCycleCompletion(
+            page,
+            earlyStatus.baseline,
+            earlyStatus.baselineText
+          );
+        }
+      }
       rememberBuyCompletion(outcome, "agent-worker");
       const openNext = await handleBuyOutcome(
         outcome,
@@ -531,6 +540,30 @@ async function main() {
           "Giữ agent ở trạng thái chạy, không dừng worker và sẽ thử lại sau " +
           `${backoffSeconds} giây (giãn dần, tối đa 5 phút).`
         );
+        continue;
+      }
+      if (error.code === "START_ACK_TIMEOUT" && startAckRetries < 2) {
+        // Bot lag làm mất click/ACK nhưng /stop đã xác nhận KHÔNG có worker:
+        // bấm lại an toàn, không tạo chu kỳ mua chồng.
+        startAckRetries += 1;
+        log(
+          `${error.userMessage || error.message} ` +
+            `Đóng mini-app và bấm lại nút Bắt đầu (lần ${startAckRetries}/2).`
+        );
+        await ui.withLock(() => closeMiniApp(page)).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        continue;
+      }
+      if (error.code === "START_ACK_UNVERIFIED" && startAckRetries < 2) {
+        // Không đọc được /stop: mở lại Telegram Web để kiểm tra trạng thái
+        // thật, không bấm mù và không treo chờ Enter.
+        startAckRetries += 1;
+        log(
+          `${error.userMessage || error.message} ` +
+            `Mở lại Telegram Web để kiểm tra worker (lần ${startAckRetries}/2).`
+        );
+        sessionUnavailable = true;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
         continue;
       }
       if (
@@ -661,7 +694,7 @@ async function waitForControlCommand(page) {
         log(
           "Telegram chat có cập nhật nhưng không thấy lệnh điều khiển mới." +
             (nearMiss
-              ? ` Phát hiện tin nhắn gần giống lệnh (${nearMiss}) — kiểm tra chính tả, lệnh đúng là /startagent, /startmua, /startnang, /starticon, /stopagent, /resetagent.`
+              ? ` Phát hiện tin nhắn gần giống lệnh (${nearMiss}) — kiểm tra chính tả, lệnh đúng là /startagent, /stopagent, /resetagent.`
               : "")
         );
       } else {

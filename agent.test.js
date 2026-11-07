@@ -31,7 +31,10 @@ const {
   parseBp,
   isTradeFrameLoaded,
   shouldRetryMiniAppBpLoad,
-  shouldRetryMiniAppOpen
+  shouldRetryMiniAppOpen,
+  isEarlyCompletion,
+  STALE_COMPLETION_GUARD_MS,
+  waitForInventoryReceipt
 } = require("./features/buy");
 const {
   countBotRateLimitNotices,
@@ -75,7 +78,8 @@ const {
   PURCHASE_RE,
   BOT_COMMAND_DELAY_MS,
   TN_COMMAND_COOLDOWN_MS,
-  MINI_APP_BLANK_TIMEOUT_MS
+  MINI_APP_BLANK_TIMEOUT_MS,
+  BUY_START_ACK_TIMEOUT_MS
 } = require("./lib/bot-patterns");
 const {
   shouldResumeBuyAfterUpgrade,
@@ -84,6 +88,10 @@ const {
   settleUpgradeOutcome
 } = require("./features/upgrade");
 const { config, validateConfig } = require("./features/config");
+const { waitForPurchaseResults } = require("./features/icon-buy/order");
+const {
+  reloadUpgradeTargetList
+} = require("./features/upgrade/mini-app");
 
 test("parse BP prices with Vietnamese thousands separators", () => {
   assert.equal(parseBp("666.666"), 666666);
@@ -103,6 +111,11 @@ test("menu waits are short and validated separately from long bot waits", () => 
   assert.ok(config.upgradeFrameTimeoutSeconds > 0);
   assert.ok(config.upgradeFrameTimeoutSeconds <= 120);
   assert.doesNotThrow(validateConfig);
+  assert.equal(config.iconBuy.maxPlayersPerBatch, 3);
+  assert.equal(config.iconBuy.maxTaskSlots, 3);
+  assert.equal(config.iconBuy.continuous, true);
+  assert.equal(config.iconBuy.monitorExistingOrders, true);
+  assert.equal(config.iconBuy.purchaseTimeoutSeconds, 0);
 });
 
 test("menu and blank-frame recoveries are bounded and spaced out", () => {
@@ -111,6 +124,37 @@ test("menu and blank-frame recoveries are bounded and spaced out", () => {
   assert.ok(TN_COMMAND_COOLDOWN_MS >= 10_000);
   assert.equal(MINI_APP_BLANK_TIMEOUT_MS, 15_000);
   assert.ok(MINI_APP_BLANK_TIMEOUT_MS < config.upgradeFrameTimeoutSeconds * 1_000);
+});
+
+test("start ACK wait is short enough to retry when the bot lags", () => {
+  // Bot thường ACK trong vài giây. Giữ ngưỡng ngắn để agent bấm lại/mini-app
+  // recovery thay vì treo cả botResponseTimeoutMinutes.
+  assert.ok(Number.isSafeInteger(BUY_START_ACK_TIMEOUT_MS));
+  assert.ok(BUY_START_ACK_TIMEOUT_MS > 0);
+  assert.ok(
+    BUY_START_ACK_TIMEOUT_MS <= config.botResponseTimeoutMinutes * 60_000,
+    "ACK wait must not exceed the configured bot response timeout"
+  );
+  assert.ok(BUY_START_ACK_TIMEOUT_MS <= 120_000);
+});
+
+test("only suspiciously early completions are re-verified with /stop", () => {
+  assert.equal(
+    isEarlyCompletion({ status: "completed", playersBought: 14 }, 3_000),
+    true
+  );
+  assert.equal(
+    isEarlyCompletion(
+      { status: "completed", playersBought: 14 },
+      STALE_COMPLETION_GUARD_MS
+    ),
+    false
+  );
+  assert.equal(
+    isEarlyCompletion({ status: "inventory-full" }, 1_000),
+    false
+  );
+  assert.equal(isEarlyCompletion(null, 1_000), false);
 });
 
 test("sendTnCommand waits for the /tn cooldown on repeated sends", async () => {
@@ -373,12 +417,13 @@ test("waits for the mini-app's displayed BP value instead of configuring while l
   );
 });
 
-test("retries a mini-app BP loading timeout once, then stops retrying", () => {
+test("retries a mini-app BP loading timeout twice, then stops retrying", () => {
   assert.equal(shouldRetryMiniAppBpLoad(0), true);
-  assert.equal(shouldRetryMiniAppBpLoad(1), false);
+  assert.equal(shouldRetryMiniAppBpLoad(1), true);
+  assert.equal(shouldRetryMiniAppBpLoad(2), false);
 });
 
-test("retries transient mini-app failures once", () => {
+test("retries transient mini-app failures twice", () => {
   for (const code of [
     "MINI_APP_UI_NOT_READY",
     "MINI_APP_NOT_OPENED",
@@ -386,7 +431,8 @@ test("retries transient mini-app failures once", () => {
     "MINI_APP_BP_LOAD_TIMEOUT"
   ]) {
     assert.equal(shouldRetryMiniAppOpen({ code }, 0), true, code);
-    assert.equal(shouldRetryMiniAppOpen({ code }, 1), false, code);
+    assert.equal(shouldRetryMiniAppOpen({ code }, 1), true, code);
+    assert.equal(shouldRetryMiniAppOpen({ code }, 2), false, code);
   }
   assert.equal(shouldRetryMiniAppOpen({ code: "TELEGRAM_LOGIN_REQUIRED" }, 0), false);
   assert.equal(shouldRetryMiniAppOpen(new Error("khác"), 0), false);
@@ -1335,8 +1381,8 @@ test("typo control commands produce a hint instead of silent ignore", () => {
   assert.equal(findNearMissControlCommand("/resetagent@Nguyenanh_fo4_bot"), null);
   assert.equal(findNearMissControlCommand("/startmua\n/startnang"), null);
   assert.equal(findNearMissControlCommand("/starticon"), null);
-  assert.equal(findNearMissControlCommand("/startmuay"), "/startmuay");
-  assert.equal(findNearMissControlCommand("/starticonx"), "/starticonx");
+  assert.equal(findNearMissControlCommand("/startmuay"), null);
+  assert.equal(findNearMissControlCommand("/starticonx"), null);
   assert.equal(findNearMissControlCommand("tin thường không lệnh"), null);
 });
 
@@ -1349,7 +1395,7 @@ test("latest worker id distinguishes own cycle from adopted one", () => {
   assert.equal(getLatestWorkerId("không có worker"), null);
 });
 
-test("all six control commands queue in order with suffixes", () => {
+test("only the unified control commands queue in order with suffixes", () => {
   const tracker = createChatTextTracker("Chat tail");
   tracker.arm();
   tracker.publish(
@@ -1357,18 +1403,10 @@ test("all six control commands queue in order with suffixes", () => {
   );
   assert.deepEqual(tracker.takeCommands(), [
     "startagent",
-    "startmua",
-    "startnang",
-    "starticon",
     "stopagent",
     "resetagent"
   ]);
-  assert.deepEqual(CONTROL_START_COMMANDS, [
-    "startagent",
-    "startmua",
-    "startnang",
-    "starticon"
-  ]);
+  assert.deepEqual(CONTROL_START_COMMANDS, ["startagent"]);
 });
 
 test("stop flow consumes stop plus any start variant, keeping reset", () => {
@@ -1377,7 +1415,7 @@ test("stop flow consumes stop plus any start variant, keeping reset", () => {
   tracker.publish("Chat tail\n/stopagent\n/startnang\n/resetagent");
   assert.deepEqual(
     tracker.takeCommandsMatching(["stopagent", ...CONTROL_START_COMMANDS]),
-    ["stopagent", "startnang"]
+    ["stopagent"]
   );
   assert.equal(tracker.takeNextCommand(), "resetagent");
 });
@@ -1389,7 +1427,7 @@ test("new start commands accept bot suffixes", () => {
     "/startmua@Nguyenanh_fo4_bot\n/startnang@Nguyenanh_fo4_bot\n" +
       "/starticon@Nguyenanh_fo4_bot\n/startmuax\n/starticonx"
   );
-  assert.deepEqual(tracker.takeCommands(), ["startmua", "startnang", "starticon"]);
+  assert.deepEqual(tracker.takeCommands(), []);
 });
 
 test("typo hints fire only for new messages, never for old history", () => {
@@ -1478,17 +1516,14 @@ test("buy resumes after upgrade only on evidence the inventory changed", () => {
   assert.equal(shouldResumeBuyAfterUpgrade({ status: "completed" }, null), false);
 });
 
-test("maps each start command to the mode it should resume in", () => {
+test("maps the unified start command to the master mode", () => {
   for (const command of CONTROL_START_COMMANDS) {
     assert.ok(
-      ["master", "buy", "nang", "icon"].includes(CONTROL_MODE_BY_COMMAND[command]),
+      ["master"].includes(CONTROL_MODE_BY_COMMAND[command]),
       `/${command} phải map sang một mode hợp lệ`
     );
   }
   assert.equal(CONTROL_MODE_BY_COMMAND.startagent, "master");
-  assert.equal(CONTROL_MODE_BY_COMMAND.startmua, "buy");
-  assert.equal(CONTROL_MODE_BY_COMMAND.startnang, "nang");
-  assert.equal(CONTROL_MODE_BY_COMMAND.starticon, "icon");
   assert.equal(CONTROL_MODE_BY_COMMAND.stopagent, undefined);
 });
 
@@ -1638,40 +1673,47 @@ test("controller imports every shared telegram-io helper it calls", () => {
   assert.equal(typeof telegramIo.closeMiniApp, "function");
 });
 
-test("controller runs /starticon as a background session, not as a main mode", () => {
+test("controller runs the unified ICON-to-upgrade flow", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const src = fs.readFileSync(path.join(__dirname, "features/controller.js"), "utf8");
   assert.match(src, /const\s*\{\s*createUiLock\s*\}\s*=\s*require\("\.\.\/lib\/ui-lock"\)/);
-  assert.match(src, /const\s*\{\s*createIconSession\s*\}\s*=\s*require\("\.\/icon-session"\)/);
-  assert.match(
-    src,
-    /createIconSession\(\{[\s\S]*?\brunIconBuy\b[\s\S]*?\}\)/
-  );
-  assert.match(
-    src,
-    /if \(command === "starticon"\) \{\s*startIconSession\(\);\s*return;\s*\}/m
-  );
-  assert.match(
-    src,
-    /if \(command === "stopagent"\) \{\s*iconSession\.abort\("\/stopagent"\);\s*return;\s*\}/m
-  );
-  assert.match(src, /iconSession\.stopAndWait\("khôi phục Telegram Web", 45_000\)/);
+  assert.match(src, /runIconBuy\(page, rl, \{/);
+  assert.match(src, /ensureIconMonitor\(\)/);
+  assert.match(src, /có ICON trong kho thì chạy mua phôi và nâng/);
+  assert.doesNotMatch(src, /createIconSession|startIconSession|iconSession/);
   assert.doesNotMatch(src, /mode\s*===\s*"icon"/);
   assert.doesNotMatch(src, /mode\s*=\s*"icon"/);
   assert.match(src, /runSingleUpgrade\(page, rl, upgradeBlockedTargetIds, ui\)/);
 });
 
-test("buy and upgrade stop flows do not turn /starticon into a main mode", () => {
+test("buy start ACK timeout re-verifies /stop before clicking again", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const cycleSrc = fs.readFileSync(
+    path.join(__dirname, "features/buy/cycle.js"),
+    "utf8"
+  );
+  assert.match(cycleSrc, /BUY_START_ACK_TIMEOUT_MS/);
+  assert.match(cycleSrc, /error\.code = "START_ACK_TIMEOUT"/);
+  assert.match(cycleSrc, /error\.code = "START_ACK_UNVERIFIED"/);
+  assert.match(cycleSrc, /checkAutoBuyRunning\(page, rl\)/);
+
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  assert.match(controllerSrc, /error\.code === "START_ACK_TIMEOUT"/);
+  assert.match(controllerSrc, /error\.code === "START_ACK_UNVERIFIED"/);
+  assert.match(controllerSrc, /isEarlyCompletion\(outcome, Date\.now\(\) - cycleStartedAt\)/);
+});
+
+test("buy and upgrade stop flows accept only the unified start command", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   for (const file of ["features/buy/cycle.js", "features/upgrade/runner.js"]) {
     const src = fs.readFileSync(path.join(__dirname, file), "utf8");
-    assert.match(
-      src,
-      /command === "starticon"[\s\S]{0,240}phiên ICON chạy nền/,
-      `${file} must consume /starticon without restarting the main flow in icon mode`
-    );
+    assert.doesNotMatch(src, /starticon|phiên ICON nền/);
   }
 });
 
@@ -1833,4 +1875,204 @@ test("master upgrade phase switches mode when a start command arrives", async ()
     () => {}
   );
   assert.deepEqual(result, { agentActive: true, mode: "buy" });
+});
+
+test("/starticon keeps monitoring ICON orders on transient E006 instead of re-adding orders", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const runnerSrc = fs.readFileSync(path.join(__dirname, "features/icon-buy/runner.js"), "utf8");
+
+  // Transient token error before any purchase log: keep polling, never re-add.
+  const firstE006 = runnerSrc.indexOf('if (/E006|làm mới token/i.test(result.fatalError))');
+  const firstCancelDecision = runnerSrc.indexOf('if (reason !== "order-limit")', firstE006);
+  assert.ok(firstE006 >= 0, "runner must branch on transient E006 token errors");
+  assert.ok(firstCancelDecision > firstE006);
+  const firstE006Slice = runnerSrc.slice(firstE006, firstCancelDecision);
+  assert.match(firstE006Slice, /giữ nguyên task ICON, không đặt lại/);
+  assert.match(firstE006Slice, /continue;/);
+  assert.doesNotMatch(firstE006Slice, /stopOrphanIconTasks/);
+
+  // Transient token error after orders were placed: keep the tasks, do not stop.
+  const secondE006 = runnerSrc.indexOf("E006 là lỗi token tạm thời sau khi đã có đơn");
+  const secondCancelDecision = runnerSrc.indexOf('if (reason !== "order-limit")', secondE006);
+  assert.ok(secondE006 >= 0);
+  assert.ok(secondCancelDecision > secondE006);
+  const secondE006Slice = runnerSrc.slice(secondE006, secondCancelDecision);
+  assert.match(secondE006Slice, /giữ nguyên các task/);
+  assert.match(secondE006Slice, /continue;/);
+});
+
+test("/starticon baseline capture retries the /stop menu read and falls back to polling", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const runnerSrc = fs.readFileSync(path.join(__dirname, "features/icon-buy/runner.js"), "utf8");
+  assert.match(runnerSrc, /async function captureStopBaselineWithRetry\(page, rl, stopSignal, ui\)/);
+  assert.match(runnerSrc, /const maxAttempts = 3;/);
+  assert.match(runnerSrc, /if \(stopSignal\(\)\) return null;/);
+  assert.match(runnerSrc, /Chưa đọc được menu \/stop \(lần \$\{attempt\}\/\$\{maxAttempts\}\)/);
+});
+
+test("/starticon cancel policy routes bad positions through the pure decision function", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const runnerSrc = fs.readFileSync(path.join(__dirname, "features/icon-buy/runner.js"), "utf8");
+  assert.match(runnerSrc, /decideCancelTargets\(\s*result\.successes,\s*config\.iconBuy\.cancelPositionAbove\s*\)/);
+  assert.match(runnerSrc, /decideCancelTargets\(\s*successes,\s*config\.iconBuy\.cancelPositionAbove\s*\)/);
+  assert.match(runnerSrc, /canceled \+= monitored\.canceled;/);
+});
+
+test("checkInventoryIcons keeps waiting before concluding an unconfirmed empty reload", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const upgradeRunnerSrc = fs.readFileSync(
+    path.join(__dirname, "features/upgrade/runner.js"),
+    "utf8"
+  );
+  const reloadDeadlineIdx = upgradeRunnerSrc.indexOf("const reloadDeadline");
+  const unconfirmedIdx = upgradeRunnerSrc.indexOf('{ code: "INVENTORY_READ_UNCONFIRMED" }');
+  assert.ok(reloadDeadlineIdx > -1, "checkInventoryIcons must bound the unconfirmed reload wait");
+  assert.ok(unconfirmedIdx > reloadDeadlineIdx);
+  const keepWaitingSlice = upgradeRunnerSrc.slice(reloadDeadlineIdx, unconfirmedIdx);
+  assert.match(keepWaitingSlice, /while \(!reloaded\)/);
+  assert.match(keepWaitingSlice, /reloadUpgradeTargetList/);
+});
+
+test("/starticon purchase wait stops on /stopagent and resolves confirmed purchases", async () => {
+  const players = [{ code: "101001201" }];
+  const page = {
+    evaluate: async () => true,
+    waitForTimeout: async () => {},
+    locator: () => ({ innerText: async () => "" })
+  };
+  const tracker = createChatTextTracker("");
+  chatTextReaders.set(page, tracker);
+
+  const stoppedResult = await waitForPurchaseResults(page, tracker, "", players, null, {
+    isStopRequested: () => true
+  });
+  assert.equal(stoppedResult.stopped, true);
+  assert.deepEqual(stoppedResult.successes, []);
+
+  const purchaseText =
+    "Đã đặt mua thành công 101001201 | 1 | 44,300,000 | 1/1 lúc 2026-11-05 10:00:00.000. Vị trí mua: 2";
+  const pending = waitForPurchaseResults(page, tracker, "", players, null, {
+    isStopRequested: () => false
+  });
+  tracker.publish(purchaseText);
+  const result = await pending;
+  assert.equal(result.stopped, undefined);
+  assert.equal(result.successes.length, 1);
+  assert.equal(result.successes[0].code, "101001201");
+  assert.equal(result.successes[0].position, 2);
+  assert.deepEqual(result.missing, []);
+});
+
+test("ICON purchase wait uses an unlimited deadline and heartbeats while waiting", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const orderSrc = fs.readFileSync(path.join(__dirname, "features/icon-buy/order.js"), "utf8");
+  assert.match(
+    orderSrc,
+    /config\.iconBuy\.purchaseTimeoutSeconds > 0\s*\?\s*Date\.now\(\) \+ config\.iconBuy\.purchaseTimeoutSeconds \* 1_000\s*:\s*Infinity/
+  );
+  assert.match(orderSrc, /nextHeartbeatAt = waitStartedAt \+ 60_000/);
+  assert.match(orderSrc, /không giới hạn thời gian/);
+});
+
+test("waitForInventoryReceipt keeps waiting and returns null when /stopagent arrives first", async () => {
+  const outcome = {
+    status: "inventory-full",
+    inventoryReceiptBaseline: 0,
+    inventoryReceiptBaselineText: "",
+    inventoryReceiptSystemErrors: 0
+  };
+  const page = {
+    evaluate: async () => true,
+    waitForTimeout: async () => {},
+    locator: () => ({ innerText: async () => "" })
+  };
+  const tracker = createChatTextTracker("");
+  tracker.arm();
+  chatTextReaders.set(page, tracker);
+  tracker.publish("/stopagent");
+  const received = await waitForInventoryReceipt(page, outcome);
+  assert.equal(received, null);
+});
+
+test("buy outcome treats a missing inventory receipt as idle instead of crashing", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const buyOutcomeSrc = fs.readFileSync(path.join(__dirname, "features/buy/outcome.js"), "utf8");
+  assert.match(buyOutcomeSrc, /if \(received === null\)/);
+});
+
+test("upgrade reload waits for the mini-app loader before confirming a reload", async () => {
+  const state = { loaderVisible: true, clicks: [] };
+  const button = {
+    count: async () => 1,
+    isVisible: async () => true,
+    isEnabled: async () => true,
+    click: async () => {
+      state.clicks.push("reload");
+      state.loaderVisible = true;
+    }
+  };
+  const frame = {
+    locator: (selector) => {
+      if (selector === "#reloadPlayersBtn") return button;
+      if (selector === "#loader") return { isVisible: async () => state.loaderVisible };
+      throw new Error(`Unexpected frame locator: ${selector}`);
+    }
+  };
+  const page = { waitForTimeout: async () => { state.loaderVisible = false; } };
+
+  const reloaded = await reloadUpgradeTargetList(frame, page, 5_000);
+  assert.equal(reloaded, true);
+  assert.deepEqual(state.clicks, [], "must not click through an already-loading mini-app");
+});
+
+test("upgrade reload returns false without clicking when the reload button is hidden", async () => {
+  const page = { waitForTimeout: async () => {} };
+  const state = { loaderVisible: false, clicks: [] };
+  const frame = {
+    locator: (selector) => {
+      if (selector === "#reloadPlayersBtn") {
+        return {
+          count: async () => 1,
+          isVisible: async () => false,
+          isEnabled: async () => true,
+          click: async () => {
+            state.clicks.push("reload");
+          }
+        };
+      }
+      if (selector === "#loader") return { isVisible: async () => state.loaderVisible };
+      throw new Error(`Unexpected frame locator: ${selector}`);
+    }
+  };
+  assert.equal(await reloadUpgradeTargetList(frame, page, 5_000), false);
+  assert.deepEqual(state.clicks, []);
+});
+
+test("upgrade reload returns false when the loader never appears after clicking reload", async () => {
+  const state = { loaderVisible: false, clicks: [] };
+  const frame = {
+    locator: (selector) => {
+      if (selector === "#reloadPlayersBtn") {
+        return {
+          count: async () => 1,
+          isVisible: async () => true,
+          isEnabled: async () => true,
+          click: async () => {
+            state.clicks.push("reload");
+            state.loaderVisible = true;
+          }
+        };
+      }
+      if (selector === "#loader") return { isVisible: async () => state.loaderVisible };
+      throw new Error(`Unexpected frame locator: ${selector}`);
+    }
+  };
+  const page = { waitForTimeout: async () => {} };
+  assert.equal(await reloadUpgradeTargetList(frame, page, 30), false);
 });

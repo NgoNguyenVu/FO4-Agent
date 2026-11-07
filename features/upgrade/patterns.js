@@ -552,20 +552,27 @@ function parseSelectedPhoiOvrs(cardTexts) {
 }
 
 function verifyUpgradeFinalUi(text, spec, phoiCount) {
+  const uiText = String(text || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   const checks = [
-    [/Số target:\s*1/, "số target"],
-    [new RegExp(`Mục tiêu:\\s*\\+${spec.targetGrade}`), "mục tiêu"],
-    [new RegExp(`Tỉ lệ tối thiểu:\\s*${spec.minRatio}%`), "tỉ lệ"],
-    [new RegExp(`Số phôi đã chọn:\\s*${phoiCount}`), "số phôi"]
+    [
+      /Số(?: lượng)?\s*(?:target|mục tiêu|cầu thủ)(?:\s*(?:cần|nâng))?\s*:?\s*1/i,
+      "số target"
+    ],
+    [new RegExp(`Mục tiêu\\s*:?\\s*\\+${spec.targetGrade}`, "i"), "mục tiêu"],
+    [new RegExp(`Tỉ lệ tối thiểu\\s*:?\\s*${spec.minRatio}%`, "i"), "tỉ lệ"],
+    [new RegExp(`Số phôi đã chọn\\s*:?\\s*${phoiCount}`, "i"), "số phôi"]
   ];
   for (const [re, name] of checks) {
-    if (!re.test(text)) throw new Error(`UI kiểm tra cuối thiếu/sai ${name}.`);
+    if (!re.test(uiText)) throw new Error(`UI kiểm tra cuối thiếu/sai ${name}.`);
   }
   const protectBp = shouldProtectBp(spec.targetGrade, spec.bpProtectFromGrade);
-  if (!protectBp && !/KHÔNG KHẢ DỤNG/.test(text)) {
+  if (!protectBp && !/KHÔNG KHẢ DỤNG/i.test(uiText)) {
     throw new Error("UI kiểm tra cuối không khớp trạng thái tắt bảo vệ BP.");
   }
-  if (protectBp && /KHÔNG KHẢ DỤNG/.test(text)) {
+  if (protectBp && /KHÔNG KHẢ DỤNG/i.test(uiText)) {
     throw new Error("UI kiểm tra cuối báo bảo vệ BP không khả dụng dù spec yêu cầu bật.");
   }
 }

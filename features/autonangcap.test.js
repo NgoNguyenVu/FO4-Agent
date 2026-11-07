@@ -19,6 +19,7 @@ const {
   getOrphanUpgradeOutcome,
   parseUpgradeTargetCards,
   summarizeUpgradeTargetCards,
+  countInventoryIcons,
   isUpgradeTargetListExhausted,
   inspectUpgradeTargetAvailability,
   readUpgradeTargetCards,
@@ -454,6 +455,19 @@ test("recognizes all ICON season badge variants", () => {
   assert.equal(picked.some((card) => card.id === "fed888"), false);
 });
 
+test("counts distinct ICON cards in inventory, including cards at target grade", () => {
+  const icon = "https://x/season/ICON.png";
+  assert.equal(
+    countInventoryIcons([
+      { text: "A _id: aaa111 • +1", imgSrcs: [icon] },
+      { text: "A _id: aaa111 • +1", imgSrcs: [icon] },
+      { text: "B _id: bbb222 • +8", imgSrcs: [icon] },
+      { text: "C _id: ccc333 • +1", imgSrcs: ["https://x/season/TOTS.png"] }
+    ]),
+    2
+  );
+});
+
 test("reads target cards only from #targetsList, not the material list", async () => {
   const makeButton = (id, src) => ({
     innerText: `P _id: ${id} • +1 • reserve Giá 10M`,
@@ -632,6 +646,14 @@ test("final check UI must match the configured spec", () => {
     () => verifyUpgradeFinalUi(good.replace("KHÔNG KHẢ DỤNG", "BẬT"), spec, 8),
     /bảo vệ BP/
   );
+});
+
+test("final check UI accepts Telegram mini-app spacing variants", () => {
+  const spec = { targetGrade: 7, minRatio: 74, bpProtectFromGrade: 8 };
+  const text =
+    "Số lượng target :\n1\nSố phôi đã chọn : 1\nMục tiêu : +7\n" +
+    "Tỉ lệ tối thiểu : 74%\nBảo vệ BP : KHÔNG KHẢ DỤNG";
+  assert.doesNotThrow(() => verifyUpgradeFinalUi(text, spec, 1));
 });
 
 test("parses OVR lists in comma and range forms", () => {

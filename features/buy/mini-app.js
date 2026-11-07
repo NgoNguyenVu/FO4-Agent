@@ -313,6 +313,24 @@ async function readCycleConfiguration(fields, price) {
   };
 }
 
+async function setCycleField(field, value, label) {
+  const expected = String(value);
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      await field.click({ timeout: 5_000 });
+      await field.press("Control+A");
+      await field.press("Backspace");
+      await field.fill(expected);
+      await field.press("Tab");
+      if (await field.inputValue() === expected) return;
+    } catch {
+      // The mini-app may replace the input while dispatching its change event.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  throw new Error(`Không điền được trường ${label} = ${expected}.`);
+}
+
 async function configureCycle(frame, quantity) {
   const fields = frame.getByRole("spinbutton");
   const price = frame.getByRole("textbox");
@@ -320,26 +338,29 @@ async function configureCycle(frame, quantity) {
     throw new Error("Không nhận diện được các trường cấu hình trong mini-app.");
   }
   const values = [
-    [fields.nth(0), config.ovrMin],
-    [fields.nth(1), config.ovrMax],
-    [fields.nth(2), config.quantityPerAttempt],
-    [fields.nth(3), quantity]
+    [fields.nth(0), config.ovrMin, "OVR tối thiểu"],
+    [fields.nth(1), config.ovrMax, "OVR tối đa"],
+    [fields.nth(2), config.quantityPerAttempt, "số lượng mỗi lần"],
+    [fields.nth(3), quantity, "số lượng mỗi chu kỳ"]
   ];
-  for (const [field, value] of values) {
-    await field.fill("");
-    await field.fill(String(value));
+  for (const [field, value, label] of values) {
+    await setCycleField(field, value, label);
   }
-  await price.fill("");
-  await price.fill(String(config.maxPriceBP));
+  await setCycleField(price, config.maxPriceBP, "giá tối đa");
 
   let actual = await readCycleConfiguration(fields, price);
   if (actual.maxPriceBP !== config.maxPriceBP) {
     // Một số bản mini-app giữ phần giá cũ khi re-render ô BP. Chọn toàn bộ
     // rồi xóa trước khi ghi lại một lần nữa, sau đó vẫn phải đọc xác minh.
-    await price.click();
-    await price.press("Control+A");
-    await price.press("Backspace");
-    await price.fill(String(config.maxPriceBP));
+    await setCycleField(price, config.maxPriceBP, "giá tối đa");
+    actual = await readCycleConfiguration(fields, price);
+  }
+  if (actual.quantityPerAttempt !== config.quantityPerAttempt) {
+    await setCycleField(
+      fields.nth(2),
+      config.quantityPerAttempt,
+      "số lượng mỗi lần"
+    );
     actual = await readCycleConfiguration(fields, price);
   }
   if (

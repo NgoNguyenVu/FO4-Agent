@@ -1,8 +1,8 @@
-// Điều phối phiên /starticon:
+// Điều phối một lượt mua ICON:
 //   1. đọc menu /stop để biết bao nhiêu slot MUA đang dùng (E003 = 0 slot)
 //   2. mua bù đủ maxTaskSlots của bot (mặc định 3), tối đa 3 mã mỗi lượt
 //   3. đọc log đặt mua; chỉ vị trí > ngưỡng mới hủy qua TTCN
-//   4. sau khi hủy đơn xấu, đọc lại /stop ở vòng sau để mua bù slot
+//   4. trả quyền điều khiển cho vòng phôi/nâng sau một lượt thành công
 //
 // Bot "Mua cầu thủ" có thể chỉ theo dõi giá và chưa tạo đơn trong thời gian chờ.
 // Vì vậy trước khi đặt, runner chụp baseline menu /stop; nếu hết hạn, bị dừng
@@ -26,8 +26,9 @@ const {
 } = require("./tasks");
 const {
   selectRandomIconPlayers,
+  selectMonitoredIconTasks,
   getPositionAction,
-  shouldCancelIconOrder
+  decideCancelTargets
 } = require("./patterns");
 
 function makeStopSignal(reader, isStopRequested) {
@@ -41,7 +42,7 @@ function withUi(ui, fn) {
   return ui ? ui.withLock(fn) : fn();
 }
 
-async function placeWithRetry(page, rl, selected, stopSignal, ui) {
+async function placeWithRetry(page, rl, selected, stopSignal, ui, ttcnBaselineIds) {
   let lastError = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     if (stopSignal()) return { stop: true };
@@ -49,7 +50,11 @@ async function placeWithRetry(page, rl, selected, stopSignal, ui) {
       // placeIconOrders tự nhả khóa trong lúc chờ log mua (chỉ đọc chat), rồi
       // giữ lại khóa trước khi trả về để phần hủy TTCN không chạy chen.
       return await withUi(ui, () =>
-        placeIconOrders(page, rl, selected, { ui, isStopRequested: stopSignal })
+        placeIconOrders(page, rl, selected, {
+          ui,
+          isStopRequested: stopSignal,
+          ttcnBaselineIds
+        })
       );
     } catch (error) {
       lastError = error;
@@ -81,8 +86,9 @@ async function stopOrphanIconTasks(page, rl, taskBaseline, selected, ui) {
 }
 
 async function cancelBadPositions(page, rl, successes, knownOrderIds, canceled, ui) {
-  const cancelTargets = successes.filter((success) =>
-    shouldCancelIconOrder(success, config.iconBuy.cancelPositionAbove)
+  const cancelTargets = decideCancelTargets(
+    successes,
+    config.iconBuy.cancelPositionAbove
   );
   for (const success of successes) {
     const action = getPositionAction(success, config.iconBuy.cancelPositionAbove);
@@ -110,15 +116,20 @@ async function cancelBadPositions(page, rl, successes, knownOrderIds, canceled, 
   return { canceled: nextCanceled, failed: result.failed.length > 0 };
 }
 
-async function monitorExistingOrders(page, reader, rl, tasks, stopSignal, knownOrderIds, ui) {
-  const players = tasks
-    .filter(
-      (task) =>
-        task.kind === "MUA" &&
-        task.grade === config.iconBuy.grade &&
-        task.quantity === config.iconBuy.quantity
-    )
-    .map((task) => ({ code: String(task.code), name: String(task.code) }));
+async function monitorExistingOrders(
+  page,
+  reader,
+  rl,
+  tasks,
+  stopSignal,
+  knownOrderIds,
+  sessionTtcnBaselineIds,
+  ui
+) {
+  const players = selectMonitoredIconTasks(tasks, {
+    grade: config.iconBuy.grade,
+    quantity: config.iconBuy.quantity
+  }).map((task) => ({ code: String(task.code), name: String(task.code) }));
   if (!players.length) return { stopped: false, canceled: 0, failed: false };
   const baselineIds = await getVisibleMessageIds(page).catch(() => null);
   const result = await waitForPurchaseResults(
@@ -127,7 +138,12 @@ async function monitorExistingOrders(page, reader, rl, tasks, stopSignal, knownO
     reader.snapshot().text,
     players,
     baselineIds,
-    { isStopRequested: stopSignal }
+    {
+      isStopRequested: stopSignal,
+      ttcnBaselineIds: sessionTtcnBaselineIds || knownOrderIds,
+      ui,
+      rl
+    }
   );
   if (result.stopped) return { stopped: true, canceled: 0, failed: false };
   const handled = await cancelBadPositions(
@@ -158,7 +174,12 @@ async function captureStopBaselineWithRetry(page, rl, stopSignal, ui) {
   return null;
 }
 
-async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null, ui = null } = {}) {
+async function runIconBuy(page, rl, {
+  pickPlayers = null,
+  isStopRequested = null,
+  ui = null,
+  onPurchaseSuccess = null
+} = {}) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
   const stopSignal = makeStopSignal(reader, isStopRequested);
@@ -169,6 +190,7 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
   let purchased = 0;
   let canceled = 0;
   let knownOrderIds = null;
+  let sessionTtcnBaselineIds = null;
   let sessionTaskBaseline = null;
   const sessionPlayers = new Map();
 
@@ -232,7 +254,7 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
       if (!continuous) {
         log(
           `Đã có ${usedTaskSlots}/${maxTaskSlots} task MUA đang chạy; ` +
-            "/starticon không đặt thêm (hết slot mua)."
+            "không đặt thêm vì đã hết slot mua."
         );
         return finish({
           action: "error",
@@ -247,6 +269,7 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
       );
       if (config.iconBuy.captureTtcnBaseline && !knownOrderIds) {
         knownOrderIds = await withUi(ui, () => captureTtcnBaseline(page, rl));
+        sessionTtcnBaselineIds = knownOrderIds;
       }
       if (config.iconBuy.monitorExistingOrders !== false) {
         const monitored = await monitorExistingOrders(
@@ -256,6 +279,7 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
           runningTaskList,
           stopSignal,
           knownOrderIds,
+          sessionTtcnBaselineIds,
           ui
         );
         canceled += monitored.canceled;
@@ -280,6 +304,7 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
     // chọn nhầm đơn cũ khi cần hủy.
     if (config.iconBuy.captureTtcnBaseline) {
       knownOrderIds = await withUi(ui, () => captureTtcnBaseline(page, rl));
+      if (!sessionTtcnBaselineIds) sessionTtcnBaselineIds = knownOrderIds;
       if (stopSignal()) {
         return finish({ action: "stop", batches, purchased, canceled });
       }
@@ -346,7 +371,14 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
 
     let result;
     try {
-      result = await placeWithRetry(page, rl, selected, stopSignal, ui);
+      result = await placeWithRetry(
+        page,
+        rl,
+        selected,
+        stopSignal,
+        ui,
+        knownOrderIds
+      );
     } catch (error) {
       // Lỗi sau khi đã gửi lệnh: giữ nguyên task; chỉ đơn có vị trí xác nhận
       // lớn hơn ngưỡng mới được xử lý riêng qua TTCN.
@@ -397,6 +429,14 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
             `(chưa nhận được log đặt mua cho: ` +
             `${missing.map((player) => player.code).join(", ") || "không rõ"}).`
         );
+        if (/E006|làm mới token/i.test(result.fatalError)) {
+            log(
+              "E006 là lỗi token tạm thời; giữ nguyên task ICON, không đặt lại " +
+                "và tiếp tục vòng theo dõi để tránh mua trùng."
+            );
+            await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
+            continue;
+        }
         if (reason !== "order-limit") {
           // E007 nghĩa là bot chưa tạo task mới; các lỗi khác vẫn có thể đã tạo.
           await stopOrphanIconTasks(page, rl, taskBaseline, selected, ui);
@@ -441,6 +481,9 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
     }
 
     purchased += result.successes.length;
+    if (typeof onPurchaseSuccess === "function") {
+      await onPurchaseSuccess(result.successes);
+    }
     let missingCleanupFailed = false;
     if (result.missing.length) {
       log(
@@ -461,24 +504,24 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
       missingCleanupFailed = Boolean(stopped?.failed?.length);
     }
 
-    const cancelTargets = [];
+    const cancelTargets = decideCancelTargets(
+      result.successes,
+      config.iconBuy.cancelPositionAbove
+    );
     for (const success of result.successes) {
       const action = getPositionAction(success, config.iconBuy.cancelPositionAbove);
-      if (shouldCancelIconOrder(success, config.iconBuy.cancelPositionAbove)) {
-        cancelTargets.push(success);
+      if (action === "cancel") continue;
+      if (action === "unknown") {
+        log(
+          `Không xác định được vị trí mua ${success.code}` +
+            `${success.positionError ? ` (${success.positionError})` : ""}; ` +
+          "giữ nguyên đơn, không hủy."
+        );
       } else {
-        if (action === "unknown") {
-          log(
-            `Không xác định được vị trí mua ${success.code}` +
-              `${success.positionError ? ` (${success.positionError})` : ""}; ` +
-              "giữ nguyên đơn, không hủy."
-          );
-        } else {
-          log(
-            `Giữ đơn ${success.code} vì vị trí ${success.position} ` +
-              `<= ${config.iconBuy.cancelPositionAbove}.`
-          );
-        }
+        log(
+          `Giữ đơn ${success.code} vì vị trí ${success.position} ` +
+            `<= ${config.iconBuy.cancelPositionAbove}.`
+        );
       }
     }
 
@@ -556,6 +599,14 @@ async function runIconBuy(page, rl, { pickPlayers = null, isStopRequested = null
 
     if (result.fatalError) {
       // Đã cố hủy các đơn vị trí xấu ở trên trước khi dừng.
+      if (/E006|làm mới token/i.test(result.fatalError)) {
+        log(
+          "E006 là lỗi token tạm thời sau khi đã có đơn; giữ nguyên các task " +
+            "và tiếp tục theo dõi, không đặt lại."
+        );
+        await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
+        continue;
+      }
       const reason = /E007|giới hạn lệnh mua đang chạy/i.test(result.fatalError)
         ? "order-limit"
         : "bot-error";

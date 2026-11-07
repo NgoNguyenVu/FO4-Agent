@@ -10,6 +10,7 @@ const {
   PURCHASE_RE,
   STARTED_RE,
   ACTIVE_RE,
+  BUY_START_ACK_TIMEOUT_MS,
   CONTROL_COMMAND_STATUS_LOG_INTERVAL_MS
 } = require("../../lib/bot-patterns");
 const {
@@ -53,10 +54,16 @@ const {
   hasNewFullInventoryStop
 } = require("./patterns");
 
-async function waitForStartAcknowledgement(page, baseline) {
+async function waitForStartAcknowledgement(page, baseline, rl, { ui = null } = {}) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
-  const deadline = Date.now() + config.botResponseTimeoutMinutes * 60_000;
+  // Bình thường bot ACK trong vài giây. Chỉ chờ tối đa 90s (hoặc cấu hình nếu
+  // ngắn hơn) rồi xác minh /stop, thay vì treo cả 5 phút khi bot lag.
+  const waitMs = Math.min(
+    config.botResponseTimeoutMinutes * 60_000,
+    BUY_START_ACK_TIMEOUT_MS
+  );
+  const deadline = Date.now() + waitMs;
   let snapshot = reader.snapshot();
   while (Date.now() < deadline) {
     const fresh = baseline.text ? getFreshSince(baseline.text, snapshot.text) : null;
@@ -71,10 +78,55 @@ async function waitForStartAcknowledgement(page, baseline) {
     if (!update) break;
     snapshot = update;
   }
-  throw new Error(
-    `Bot chưa xác nhận bắt đầu trong ${config.botResponseTimeoutMinutes} phút; ` +
-      "agent dừng và không tự gửi lại."
+  // Bot có thể đã nhận nút bắt đầu nhưng gửi ACK rất muộn. Xác minh trạng
+  // thái thật bằng /stop trước khi kết luận thất bại:
+  // - worker đang chạy -> nhận worker đó, không bấm lại (tránh mua chồng);
+  // - /stop xác nhận không có worker -> báo lỗi retryable để controller bấm lại
+  //   nút Bắt đầu (bot lag làm mất click);
+  // - không xác minh được -> báo lỗi riêng để controller mở lại Telegram Web
+  //   kiểm tra tiếp, tuyệt đối không bấm mù.
+  let status = null;
+  let verifyError = null;
+  for (let attempt = 1; attempt <= 2 && !status; attempt += 1) {
+    try {
+      status = ui
+        ? await ui.withLock(() => checkAutoBuyRunning(page, rl))
+        : await checkAutoBuyRunning(page, rl);
+    } catch (error) {
+      verifyError = error;
+      if (attempt < 2) {
+        log(
+          `Chưa xác minh được worker sau khi thiếu ACK (lần ${attempt}/2): ` +
+            `${error.message}; thử lại.`
+        );
+        await page.waitForTimeout(5_000);
+      }
+    }
+  }
+  if (status?.running) {
+    log(
+      "Bot chưa gửi ACK bắt đầu đúng hạn nhưng worker Auto Mua đang chạy; " +
+        "nhận worker hiện tại và tiếp tục theo dõi."
+    );
+    return { adopted: true, baseline: status.baseline, baselineText: status.baselineText };
+  }
+  if (status && !status.running) {
+    const error = new Error(
+      `Bot chưa xác nhận bắt đầu sau ${Math.round(waitMs / 1_000)} giây và /stop ` +
+        "xác nhận không có worker đang chạy; agent sẽ bấm lại nút Bắt đầu."
+    );
+    error.code = "START_ACK_TIMEOUT";
+    error.userMessage = error.message;
+    throw error;
+  }
+  const error = new Error(
+    `Bot chưa xác nhận bắt đầu trong ${Math.round(waitMs / 1_000)} giây và chưa ` +
+      "xác minh được trạng thái worker; agent dừng để tránh mua chồng." +
+      (verifyError ? ` Lỗi /stop: ${verifyError.message}` : "")
   );
+  error.code = "START_ACK_UNVERIFIED";
+  error.userMessage = error.message;
+  throw error;
 }
 
 // Gửi /stop để kiểm tra worker auto-buy có đang chạy không.
@@ -235,8 +287,7 @@ async function waitForCycleCompletion(page, baseline, baselineText = null) {
 }
 
 // Gửi /stopauto và chờ bot xác nhận dừng.
-// Trả về lệnh start đã nhận trong lúc dừng (chuỗi "startagent"/"startmua"/
-// "startnang"/"starticon") nếu cần chạy tiếp, hoặc null nếu không.
+// Trả về lệnh /startagent nhận trong lúc dừng để chạy tiếp, hoặc null.
 async function stopPurchaseWorker(page, rl) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
@@ -252,12 +303,6 @@ async function stopPurchaseWorker(page, rl) {
   let lastOrphanClearedAt = 0;
   while (Date.now() < deadline) {
     for (const command of reader.takeCommandsMatching(["stopagent", ...CONTROL_START_COMMANDS])) {
-      if (command === "starticon") {
-        // /starticon không còn là mode của luồng chính: observer đã mở phiên
-        // ICON nền khi lệnh đến. Chỉ tiêu thụ lệnh để không đổi mode mua/nâng.
-        log("Đã nhận /starticon trong lúc dừng; phiên ICON chạy nền, giữ nguyên mode mua/nâng.");
-        continue;
-      }
       if (CONTROL_START_COMMANDS.includes(command)) {
         restartCommand = command;
         log(`Đã nhận /${command} trong lúc dừng; sẽ khởi động lại sau khi bot xác nhận dừng.`);
@@ -413,10 +458,12 @@ async function waitForInventoryReceipt(page, outcome) {
     );
     if (update) snapshot = update;
   }
-  throw new Error(
+  log(
     `Bot đã báo kho đầy nhưng chưa xác nhận nhận cầu thủ vào kho trong ` +
-      `${config.botResponseTimeoutMinutes} phút; agent không thực hiện lệnh kế tiếp.`
+      `${config.botResponseTimeoutMinutes} phút; giữ an toàn, không thực hiện ` +
+      "lệnh kế tiếp và chờ /startagent mới."
   );
+  return null;
 }
 
 module.exports = {

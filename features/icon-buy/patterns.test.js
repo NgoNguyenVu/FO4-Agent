@@ -15,8 +15,10 @@ const {
   parseCompactBp,
   parseTtcnCardText,
   selectOrderToCancel,
+  selectMonitoredIconTasks,
   getPositionAction,
-  shouldCancelIconOrder
+  shouldCancelIconOrder,
+  decideCancelTargets
 } = require("./patterns");
 const { filterNewMessages, messagesToText } = require("./chat-messages");
 
@@ -229,6 +231,66 @@ test("icon session cancels only confirmed positions above 3", () => {
   assert.equal(shouldCancelIconOrder({ position: null }, 3), false);
   assert.equal(shouldCancelIconOrder({ position: "không rõ" }, 3), false);
   assert.equal(shouldCancelIconOrder(null, 3), false);
+});
+
+test("icon monitor selects only current session MUA tasks by grade and quantity", () => {
+  const tasks = [
+    { kind: "MUA", code: "101001201", grade: 1, quantity: 1, taskId: "11" },
+    // Task BÁN không phải task MUA để mua ICON.
+    { kind: "BÁN", code: "101001201", grade: 1, quantity: 1, taskId: "12" },
+    // Task của Auto Mua mua x3 thuộc phiên khác (khác quantity).
+    { kind: "MUA", code: "101001201", grade: 1, quantity: 3, taskId: "13" },
+    // Task MUA của phiên ICON khác mùa/grade.
+    { kind: "MUA", code: "101001201", grade: 2, quantity: 1, taskId: "14" }
+  ];
+  const monitored = selectMonitoredIconTasks(tasks, { grade: 1, quantity: 1 });
+  assert.deepEqual(
+    monitored.map((task) => task.taskId),
+    ["11"],
+    "chỉ task MUA cùng grade/quantity của phiên hiện tại được monitor"
+  );
+  assert.deepEqual(
+    selectMonitoredIconTasks(tasks, { grade: 2, quantity: 1 }).map(
+      (task) => task.taskId
+    ),
+    ["14"],
+    "phiên có grade khác thì không monitor task của phiên này"
+  );
+  assert.deepEqual(selectMonitoredIconTasks(tasks, { grade: 9, quantity: 9 }), []);
+});
+
+test("position decision uses the configured default threshold, not a stale value", () => {
+  // cancelPositionAbove vận hành mặc định là 3 (config.iconBuy.cancelPositionAbove);
+  // các hàm không truyền ngưỡng phải dùng mức này thay vì mặc định cũ.
+  assert.equal(getPositionAction({ position: 4 }), "cancel");
+  assert.equal(getPositionAction({ position: 3 }), "keep");
+  assert.equal(getPositionAction({ position: 1 }), "keep");
+  assert.equal(getPositionAction({ position: null, positionError: "E004" }), "unknown");
+  assert.equal(shouldCancelIconOrder({ position: 4 }), true);
+  assert.equal(shouldCancelIconOrder({ position: 3 }), false);
+  assert.equal(shouldCancelIconOrder({ position: 1 }), false);
+  assert.equal(shouldCancelIconOrder({ position: null, positionError: "E004" }), false);
+  assert.equal(shouldCancelIconOrder(null), false);
+});
+
+test("decideCancelTargets keeps only confirmed positions above the cancel threshold", () => {
+  const successes = [
+    { code: "101214649", position: 4 },
+    { code: "101214101", position: 3 },
+    { code: "101214102", position: null, positionError: "E004" },
+    { code: "101214103", position: "không rõ" }
+  ];
+  assert.deepEqual(
+    decideCancelTargets(successes, 3).map((item) => item.code),
+    ["101214649"],
+    "only positions above the threshold may enter the cancel list"
+  );
+  // Ngưỡng khác -> quyết định khác, không phụ thuộc mức mua cũ.
+  assert.deepEqual(decideCancelTargets([{ code: "101214649", position: 2 }], 1), [
+    { code: "101214649", position: 2 }
+  ]);
+  assert.deepEqual(decideCancelTargets(null, 3), []);
+  assert.deepEqual(decideCancelTargets([], 3), []);
 });
 
 test("icon menu signature needs both the member menu and Auto Mua entry", () => {

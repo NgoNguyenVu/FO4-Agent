@@ -175,8 +175,7 @@ async function waitForUpgradeCompletion(page, baseline, baselineText = null, tim
     // coi target đang khóa/training là "đã hết target".
     if (Date.now() >= nextTargetCheckAt) {
       nextTargetCheckAt = Date.now() + spec.targetCheckIntervalSeconds * 1_000;
-      // Kiểm tra mini-app là thao tác UI: chỉ chiếm khóa trong đoạn này để
-      // phiên ICON nền vẫn chạy được trong phần lớn thời gian chờ nâng cấp.
+      // Kiểm tra mini-app là thao tác UI: chỉ chiếm khóa trong đoạn này.
       if (ui) await ui.acquire();
       try {
         let frameInfo = null;
@@ -315,11 +314,6 @@ async function stopUpgradeWorker(page, rl) {
   let restartCommand = null;
   while (Date.now() < deadline) {
     for (const command of reader.takeCommandsMatching(["stopagent", ...CONTROL_START_COMMANDS])) {
-      if (command === "starticon") {
-        // /starticon chạy nền, không phải mode của luồng mua/nâng chính.
-        log("Đã nhận /starticon trong lúc dừng nâng cấp; phiên ICON chạy nền, giữ nguyên mode.");
-        continue;
-      }
       if (CONTROL_START_COMMANDS.includes(command)) {
         restartCommand = command;
         log(`Đã nhận /${command} trong lúc dừng nâng cấp; sẽ chạy tiếp sau khi xác nhận.`);
@@ -446,7 +440,10 @@ async function runUpgradeOnce({
   log(`Target nâng cấp: ${target.name} (+${target.grade}, giá ${target.priceRaw}).`);
   await withTimeout(selectUpgradeTarget(frame, page, target), 3 * 60_000, "chọn cầu thủ chính");
   const phoiCount = await withTimeout(
-    filterUpgradePhoi(frame, page, parseOvrList(spec.ovrPhoi)),
+    filterUpgradePhoi(frame, page, parseOvrList(spec.ovrPhoi), {
+      ovrPhoi: spec.ovrPhoi,
+      maxPriceEach: spec.maxPriceEach
+    }),
     3 * 60_000,
     "lọc phôi từ kho"
   );
@@ -469,8 +466,8 @@ async function runUpgradeOnce({
   };
   await withTimeout(pressUpgradeStart(frame), 2 * 60_000, "bấm bắt đầu nâng cấp");
   await withTimeout(dismissGoodLuckPopup(page), 30_000, "đóng popup chúc may mắn").catch(() => false);
-  // Từ đây chỉ chờ ack/kết quả trong chat. Nhả khóa UI để phiên ICON nền chạy;
-  // waitForUpgradeCompletion tự lấy khóa trong các lần kiểm tra mini-app.
+  // Từ đây chỉ chờ ack/kết quả trong chat; waitForUpgradeCompletion tự lấy
+  // khóa trong các lần kiểm tra mini-app.
   if (ui) ui.release();
   try {
     await waitForUpgradeStartAck(page, ackBaseline);
@@ -517,11 +514,19 @@ async function checkInventoryIcons(page, rl) {
       "đọc số icon trong kho"
     );
     if (!cards.length) {
-      const reloaded = await reloadUpgradeTargetList(
-        frame,
-        page,
-        config.upgradeFrameTimeoutSeconds * 1_000
-      );
+      // Đọc rỗng có thể gặp khi mini-app đang tải lại kho; không kết luận "hết
+      // icon" khi chưa xác nhận được reload. Giữ chờ trong bound trước khi trả
+      // INVENTORY_READ_UNCONFIRMED để không hủy nhịp mua khi chưa chắc chắn.
+      const reloadDeadline = Date.now() + config.upgradeFrameTimeoutSeconds * 1_000;
+      let reloaded = false;
+      while (!reloaded) {
+        const remainingMs = reloadDeadline - Date.now();
+        if (remainingMs <= 0) break;
+        reloaded = await reloadUpgradeTargetList(frame, page, remainingMs);
+        if (!reloaded) {
+          await page.waitForTimeout(1_000);
+        }
+      }
       if (!reloaded) {
         throw Object.assign(
           new Error(

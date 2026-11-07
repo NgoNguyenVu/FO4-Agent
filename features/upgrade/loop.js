@@ -108,7 +108,7 @@ async function runSingleUpgrade(page, rl, blockedTargetIds = new Set(), ui = nul
     const adopted = getExistingUpgradeRun(chatTextReaders.get(page).snapshot().text);
     if (adopted) {
       log("Đã có worker Nâng cấp đang chạy; chờ luồng này thay vì mở mới.");
-      // Chờ bot là thao tác chỉ đọc: nhả khóa UI để phiên ICON nền có thể chạy.
+      // Chờ bot là thao tác chỉ đọc: nhả khóa UI trong lúc chờ.
       if (ui) ui.release();
       let outcome;
       try {

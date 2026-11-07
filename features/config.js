@@ -24,25 +24,22 @@ const config = {
     targetCheckIntervalSeconds: 120,
     ...(rawConfig.upgrade || {})
   },
-  // Luồng /starticon: mỗi lần gọi chọn ngẫu nhiên 1 cầu thủ ICON trong danh sách
-  // yêu thích "Tra cứu mã cầu thủ offline", mua +1/1. Khi có slot trống thì
-  // mua bù đủ 3 task; chỉ vị trí mua > ngưỡng mới được hủy qua tab TTCN.
+  // Lượt ICON: chọn ngẫu nhiên 1 cầu thủ yêu thích, mua +1/1 rồi chuyển sang
+  // mua phôi và nâng cấp.
   iconBuy: {
-    // Mỗi lượt gửi tối đa 3 mã (giới hạn của bot). Số mã thực tế được chọn
-    // bằng số slot MUA còn trống, để luôn mua bù đủ maxTaskSlots.
+    // Mỗi lượt gửi tối đa 3 mã (giới hạn của bot).
     maxPlayersPerBatch: 3,
     grade: 1,
     quantity: 1,
     cancelPositionAbove: 3,
     menuTimeoutSeconds: 45,
     favoritesTimeoutSeconds: 60,
-    // 0 = theo dõi không giới hạn; task chỉ kết thúc khi stopagent/resetagent
-    // hoặc bot trả lỗi không thể tiếp tục.
+    // 0 = theo dõi không giới hạn khi bot chưa trả kết quả.
     purchaseTimeoutSeconds: 0,
     ttcnTimeoutSeconds: 60,
     batchIntervalSeconds: 2,
-    // Chạy tuần hoàn: sau khi hủy đơn, mua bù lại slot; khi đủ slot thì chờ.
-    // Đặt false để giữ hành vi one-shot cũ (dừng sau maxBatchesPerRun).
+    // Giữ tối đa 3 task ICON và theo dõi vô hạn; vòng chính mua phôi/nâng
+    // độc lập khi phát hiện ICON đã vào kho.
     continuous: true,
     monitorExistingOrders: true,
     slotPollSeconds: 15,
