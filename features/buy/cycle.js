@@ -148,7 +148,18 @@ async function checkAutoBuyRunning(page, rl) {
     if (result === "auto-buy-running" || result === "auto-buy-not-running") {
       const running = result === "auto-buy-running";
       const evidence = snapshot.text.slice(-300).replace(/\s+/g, " ").trim();
-      log(`Kết quả kiểm tra /stop: ${running ? "đang chạy" : "KHÔNG chạy"}; tin mới nhất: ${evidence || "(trống)"}`);
+      log(
+        `Kết quả kiểm tra /stop: luồng Mua phôi ${running ? "đang chạy" : "KHÔNG chạy"}; ` +
+          `tin mới nhất: ${evidence || "(trống)"}`
+      );
+      // Menu có thể chỉ còn task MUA của ICON (không phải Mua phôi). Nói rõ để
+      // log "KHÔNG chạy" không bị hiểu nhầm là không có task nào.
+      if (!running && /THƯỜNG\s*•\s*MUA/i.test(evidence)) {
+        log(
+          "Menu /stop chỉ có task MUA khác (ICON), không có luồng Mua phôi; " +
+            "coi là rảnh cho chu kỳ mua phôi mới."
+        );
+      }
       return { running, baseline: getCycleBaseline(snapshot.text), baselineText: snapshot.text };
     }
     const checkFresh = getFreshSince(baselineText, snapshot.text);

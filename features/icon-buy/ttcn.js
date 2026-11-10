@@ -55,7 +55,13 @@ async function waitForAutoBuyFrame(page, timeoutMs) {
   return { frame: null, lastInfo };
 }
 
-async function openAutoBuyFrame(page, rl) {
+// `refreshMenu` giữ để tương thích chỗ gọi cũ; từ nay lần mở đầu tiên luôn
+// ưu tiên nút menu sẵn có, chỉ lần mở lại mới buộc xin /tn.
+async function openAutoBuyFrame(
+  page,
+  rl,
+  { refreshMenu = false, attempts = 2, allowTn = true } = {}
+) {
   const { count: existingCount, visible: existingVisible } =
     await inspectPaymentFrames(page);
   if (existingCount > 0 && existingVisible) {
@@ -78,17 +84,28 @@ async function openAutoBuyFrame(page, rl) {
     15_000,
     Math.floor((config.iconBuy.ttcnTimeoutSeconds * 1_000) / 2)
   );
-  const maxAttempts = 2;
+  const maxAttempts = Math.max(1, Number(attempts) || 1);
   let lastInfo = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     await closeMiniApp(page, "mini-app Auto Mua").catch(() => {});
     try {
-      // Lần 2 buộc lấy menu /tn mới: callback cũ có thể mở app nhưng không
-      // truyền được phiên, khiến iframe trắng dù src đúng.
+      // Ưu tiên nút "Auto Mua Phôi" cũ còn hiển thị. Trước đây `refreshMenu`
+      // làm lần mở đầu tiên luôn gửi /tn dù nút cũ vẫn bấm được, nên mỗi lượt
+      // dò TTCN/hủy đơn lại spam một tin /tn (log 05:34, 05:36, 05:47).
+      // Chỉ gửi /tn khi: chưa có nút, lần mở trước ra iframe trắng (attempt 2),
+      // hoặc nút cũ hết token E002 — clickFeatureButton tự refresh một lần khi
+      // gặp E002.
       const button = await ensureFeatureButton(page, rl, AUTO_BUY_LABEL, {
-        refresh: attempt > 1
+        refresh: attempt > 1,
+        allowTn
       });
-      await clickFeatureButton(page, rl, AUTO_BUY_LABEL, { button });
+      // Truyền đúng locator vừa tìm được: clickFeatureButton không gọi lại
+      // ensureFeatureButton (nguồn gửi /tn lần hai ngoài ý muốn).
+      await clickFeatureButton(page, rl, AUTO_BUY_LABEL, {
+        button,
+        retries: 1,
+        allowTn
+      });
     } catch (error) {
       lastInfo = error.message;
       if (attempt >= maxAttempts) break;
@@ -205,8 +222,12 @@ async function readTtcnOrders(frame) {
   });
 }
 
-async function openTtcnList(page, rl) {
-  const frame = await openAutoBuyFrame(page, rl);
+async function openTtcnList(
+  page,
+  rl,
+  { refreshMenu = false, attempts = 2, allowTn = true } = {}
+) {
+  const frame = await openAutoBuyFrame(page, rl, { refreshMenu, attempts, allowTn });
   const tab = await waitForTtcnTab(frame);
   await withTimeout(tab.click(), 30_000, "mở tab Gỡ cầu thủ TTCN");
   await waitForTtcnList(frame, config.iconBuy.ttcnTimeoutSeconds * 1_000);
@@ -216,7 +237,9 @@ async function openTtcnList(page, rl) {
 async function captureTtcnBaseline(page, rl) {
   let frame = null;
   try {
-    frame = await openTtcnList(page, rl);
+    // Chỉ 1 lần mở menu: thất bại thì trả null để vòng mua tự quyết định,
+    // không gửi /tn lặp trong cùng một lần đọc.
+    frame = await openTtcnList(page, rl, { attempts: 1 });
     const orders = await readTtcnOrders(frame);
     const errorText = await withTimeout(
       frame.locator(ERROR_SELECTOR).innerText().catch(() => ""),
@@ -315,7 +338,7 @@ async function cancelIconOrders(page, rl, successes, baselineIds = null) {
   if (!cancelable.length) return results;
   let frame = null;
   try {
-    frame = await openTtcnList(page, rl);
+    frame = await openTtcnList(page, rl, { refreshMenu: true, attempts: 1 });
     let orders = await readTtcnOrders(frame);
     const knownIds = baselineIds ? new Set(baselineIds) : null;
 
@@ -343,9 +366,13 @@ async function cancelIconOrders(page, rl, successes, baselineIds = null) {
         continue;
       }
       success.orderId = order.orderId;
+      const cancelPositionText =
+        success.position == null
+          ? success.positionError || "không rõ"
+          : String(success.position);
       log(
         `Đang hủy đơn TTCN ${success.code} (orderId ${order.orderId}, ` +
-          `grade ${order.grade}, giá ${order.priceText}).`
+          `grade ${order.grade}, giá ${order.priceText}, vị trí ${cancelPositionText}).`
       );
       const result = await cancelOneOrder(frame, order);
       if (result.ok) {

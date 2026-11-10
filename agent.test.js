@@ -48,7 +48,8 @@ const {
   chatTextReaders,
   createChatTextTracker,
   waitForChatChange,
-  waitForTextToSettle
+  waitForTextToSettle,
+  reattachChatObserver
 } = require("./lib/chat-runtime");
 const { waitForMenuReply } = require("./features/buy/menu");
 const {
@@ -71,6 +72,7 @@ const {
 const {
   isBotChatOpen,
   ensureBotChatOpen,
+  hardReloadTelegram,
   sendTnCommand,
   getPaymentFrameLocator
 } = require("./features/telegram-io");
@@ -456,6 +458,19 @@ test("recognizes the bot chat only when its pane is actually open", async () => 
         url: "https://web.telegram.org/a/#8107829917",
         titleVisible: true,
         title: "BOT-TTCN-FO4"
+      })
+    ),
+    true
+  );
+  // Bot đổi tên hiển thị nhưng URL vẫn đúng bot + ô nhập mở -> coi là đang mở,
+  // tránh page.goto lại trên mỗi lệnh.
+  assert.equal(
+    await isBotChatOpen(
+      makePage({
+        url: "https://web.telegram.org/k/#@Nguyenanh_fo4_bot",
+        titleVisible: true,
+        title: "BOT CHEN FC4",
+        composerVisible: true
       })
     ),
     true
@@ -1739,7 +1754,7 @@ test("/starticon only reads /stop and never stops tasks or cancels unknown order
   assert.match(runnerSrc, /const usedTaskSlots = countRunningTaskSlots/);
   assert.match(runnerSrc, /getAvailableTaskSlots/);
   assert.match(runnerSrc, /reason: "task-slots-full"/);
-  assert.match(runnerSrc, /giữ nguyên phiên ICON và chờ nhịp tiếp theo/);
+  assert.match(runnerSrc, /giữ nguyên phiên ICON và chờ/);
   assert.match(runnerSrc, /reason: "no-purchase-success"/);
   assert.match(runnerSrc, /Không dừng phiên ICON vì/);
   assert.doesNotMatch(runnerSrc, /Dừng tất cả/);
@@ -1937,6 +1952,51 @@ test("checkInventoryIcons keeps waiting before concluding an unconfirmed empty r
   assert.match(keepWaitingSlice, /reloadUpgradeTargetList/);
 });
 
+test("transient inventory read failure keeps the master loop alive", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  // INVENTORY_READ_UNCONFIRMED chỉ là mini-app chưa sẵn sàng: phải retry/giữ
+  // agent sống, không được ném ra làm sập vòng tổng.
+  assert.match(controllerSrc, /error\.code !== "INVENTORY_READ_UNCONFIRMED"/);
+  // Khi vòng tổng lỗi chí mạng, phải dừng luồng ICON nền để không còn
+  // heartbeat "Đang chờ bot hoàn tất đơn ICON" chạy mãi.
+  assert.match(controllerSrc, /await stopIconMonitor\("agent-error"\)/);
+  const cycleSrc = fs.readFileSync(
+    path.join(__dirname, "features/buy/cycle.js"),
+    "utf8"
+  );
+  // Log phải nói rõ đây là trạng thái luồng Mua phôi, tránh hiểu nhầm là
+  // "không có task nào chạy" khi menu /stop vẫn liệt kê task ICON.
+  assert.match(cycleSrc, /luồng Mua phôi/);
+  assert.match(cycleSrc, /task MUA khác \(ICON\)/);
+});
+
+test("inventory checks are spaced by config and open the mini-app once per check", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  // Không còn vòng thử 3 lần cách nhau 10s (mở mini-app liên tục khi kho rỗng).
+  assert.doesNotMatch(controllerSrc, /lần \$\{attempt\}\/3/);
+  assert.match(controllerSrc, /inventoryCheckIntervalSeconds/);
+  assert.match(controllerSrc, /nextInventoryCheckAt/);
+  // Bỏ qua kiểm tra kho thì không được mở mini-app và không mua phôi.
+  assert.match(
+    controllerSrc,
+    /if \(now < nextInventoryCheckAt\) \{[\s\S]{0,800}?continue;/
+  );
+  // Receipt "nhận cầu thủ vào kho" mới thì kiểm tra ngay.
+  assert.match(controllerSrc, /receiptCount > inventoryReceiptSeen/);
+  assert.equal(config.iconBuy.inventoryCheckIntervalSeconds, 1800);
+  assert.doesNotThrow(() => validateConfig());
+});
+
 test("/starticon purchase wait stops on /stopagent and resolves confirmed purchases", async () => {
   const players = [{ code: "101001201" }];
   const page = {
@@ -1967,7 +2027,7 @@ test("/starticon purchase wait stops on /stopagent and resolves confirmed purcha
   assert.deepEqual(result.missing, []);
 });
 
-test("ICON purchase wait uses an unlimited deadline and heartbeats while waiting", () => {
+test("ICON purchase wait uses an unlimited deadline, heartbeats, and backs off TTCN checks", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const orderSrc = fs.readFileSync(path.join(__dirname, "features/icon-buy/order.js"), "utf8");
@@ -1975,8 +2035,53 @@ test("ICON purchase wait uses an unlimited deadline and heartbeats while waiting
     orderSrc,
     /config\.iconBuy\.purchaseTimeoutSeconds > 0\s*\?\s*Date\.now\(\) \+ config\.iconBuy\.purchaseTimeoutSeconds \* 1_000\s*:\s*Infinity/
   );
-  assert.match(orderSrc, /nextHeartbeatAt = waitStartedAt \+ 60_000/);
+  assert.match(orderSrc, /nextHeartbeatAt = waitStartedAt \+ PURCHASE_HEARTBEAT_MS/);
+  assert.match(orderSrc, /const PURCHASE_HEARTBEAT_MS = 300_000/);
   assert.match(orderSrc, /không giới hạn thời gian/);
+  // TTCN chỉ là nguồn dự phòng: không mở mini-app mỗi 15-30 giây nữa.
+  assert.match(orderSrc, /const TTCN_FIRST_CHECK_MS = 600_000/);
+  assert.match(orderSrc, /const TTCN_MAX_INTERVAL_MS = 300_000/);
+  assert.match(orderSrc, /const TTCN_ERROR_COOLDOWN_MS = 600_000/);
+  assert.match(orderSrc, /const TTCN_MAX_PROBES = 1/);
+  assert.match(orderSrc, /ttcnProbesLeft -= 1/);
+  // Chỉ dò khi có baseline TTCN; chế độ chỉ theo dõi task không được in
+  // "Đã dò TTCN 1 lần" trong khi thực ra không mở mini-app (log 06:17-07:50).
+  assert.match(orderSrc, /ttcnProbesLeft = ttcnBaselineIds \? TTCN_MAX_PROBES : 0/);
+  // Trong lúc chờ lượt hiện tại vẫn quét vị trí xấu của đơn các lượt trước.
+  assert.match(orderSrc, /scanPlayers = null/);
+  assert.match(orderSrc, /onBadPositions = null/);
+  assert.match(orderSrc, /STRAY_POSITION_SCAN_MS/);
+  assert.match(orderSrc, /refreshMenu: false,\s*attempts: 1,\s*allowTn: false/);
+  assert.match(orderSrc, /nextTtcnCheckAt = waitStartedAt \+ ttcnCheckIntervalMs/);
+  assert.match(orderSrc, /ttcnCheckIntervalMs \* 2/);
+  assert.match(orderSrc, /Math\.min\([\s\S]{0,120}TTCN_MAX_INTERVAL_MS/);
+  assert.match(orderSrc, /Math\.max\(ttcnCheckIntervalMs, ttcnErrorCooldownMs\)/);
+  assert.doesNotMatch(orderSrc, /nextTtcnCheckAt = Date\.now\(\) \+ 30_000/);
+});
+
+test("menu requests send /tn once per attempt and TTCN probes are single-try", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const menuSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/menu.js"),
+    "utf8"
+  );
+  // Không còn vòng retry lồng nhau: mỗi lượt chỉ một /tn, thất bại thì nhường
+  // cho backoff bên ngoài thay vì gửi dồn 2 lần × 45s.
+  assert.match(menuSrc, /Đã gửi \/tn để lấy menu cho nút/);
+  assert.doesNotMatch(menuSrc, /attempts < 2/);
+  assert.doesNotMatch(menuSrc, /lần \$\{attempts\}\/2/);
+
+  const ttcnSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/ttcn.js"),
+    "utf8"
+  );
+  // Cho phép caller giới hạn số lần thử; luồng theo dõi dùng đúng 1 lần.
+  assert.match(ttcnSrc, /function openAutoBuyFrame\(/);
+  assert.match(ttcnSrc, /attempts = 2, allowTn = true/);
+  assert.match(ttcnSrc, /function openTtcnList\(/);
+  assert.match(ttcnSrc, /refreshMenu = false, attempts = 2, allowTn = true/);
+  assert.match(ttcnSrc, /Math\.max\(1, Number\(attempts\) \|\| 1\)/);
 });
 
 test("waitForInventoryReceipt keeps waiting and returns null when /stopagent arrives first", async () => {
@@ -2075,4 +2180,265 @@ test("upgrade reload returns false when the loader never appears after clicking 
   };
   const page = { waitForTimeout: async () => {} };
   assert.equal(await reloadUpgradeTargetList(frame, page, 30), false);
+});
+
+test("ICON purchase wait soft watchdog returns timedOut instead of hanging forever", async () => {
+  const players = [{ code: "101001201" }];
+  const page = {
+    evaluate: async () => true,
+    waitForTimeout: async () => {},
+    locator: () => ({ innerText: async () => "" })
+  };
+  const tracker = createChatTextTracker("");
+  chatTextReaders.set(page, tracker);
+  const started = Date.now();
+  const result = await waitForPurchaseResults(page, tracker, "", players, null, {
+    isStopRequested: () => false,
+    maxWaitMs: 50
+  });
+  assert.equal(result.timedOut, true);
+  assert.equal(result.stopped, undefined);
+  assert.equal(result.successes.length, 0);
+  assert.deepEqual(result.missing.map((p) => p.code), ["101001201"]);
+  assert.ok(Date.now() - started < 5_000);
+});
+
+test("ICON purchase wait catches late bad position of an earlier session order", async () => {
+  const current = [{ code: "101048940" }];
+  const earlier =
+    "Đã đặt mua thành công 101005099 | 1 | 33,000,000 | 1/1 lúc 2026-11-09 11:03:31.000. Vị trí mua: 4";
+  const tracker = createChatTextTracker(earlier);
+  const page = {
+    evaluate: async () => true,
+    waitForTimeout: async () => {},
+    locator: () => ({ innerText: async () => earlier })
+  };
+  chatTextReaders.set(page, tracker);
+  const seen = [];
+  const result = await waitForPurchaseResults(page, tracker, "", current, null, {
+    isStopRequested: () => false,
+    maxWaitMs: 300,
+    scanPlayers: [{ code: "101005099" }],
+    onBadPositions: async (items) => {
+      seen.push(...items);
+    }
+  });
+  assert.equal(result.timedOut, true);
+  assert.ok(
+    seen.some((item) => item.code === "101005099" && item.position === 4),
+    "phải phát hiện vị trí 4 của đơn cũ dù đang chờ đơn khác"
+  );
+});
+
+test("ICON monitor is bounded and catches late position logs", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const runnerSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/runner.js"),
+    "utf8"
+  );
+  // Theo dõi task có sẵn phải quay lại đọc /stop sau một cửa sổ giới hạn,
+  // không kẹt mãi trong waitForPurchaseResults.
+  assert.match(runnerSrc, /monitorWaitSeconds/);
+  assert.match(runnerSrc, /maxWaitMs/);
+  // Bot có thể gửi vị trí rất muộn: quét toàn bộ cửa sổ chat mỗi vòng.
+  assert.match(runnerSrc, /findLatestKnownPositions\(/);
+  // Mở TTCN lỗi thì chờ rồi thử lại, mỗi lần chỉ một lượt /tn.
+  assert.match(runnerSrc, /CANCEL_MAX_ATTEMPTS = 2/);
+  assert.match(runnerSrc, /cancelIconOrdersWithRetry/);
+  // Đơn vị trí xấu chưa hủy được không được bỏ rơi: ghi nhận orderId và thử
+  // hủy lại ở nhịp sau thay vì kết thúc phiên.
+  assert.match(runnerSrc, /const pendingCancels = new Map\(\)/);
+  assert.match(runnerSrc, /function pendingCancelKey\(item\)/);
+  assert.match(runnerSrc, /CANCEL_PENDING_MAX_BACKOFF_MS = 1_800_000/);
+  assert.match(runnerSrc, /pendingCancels\.set\(pendingCancelKey\(item\), item\)/);
+  // Đơn treo KHÔNG được chặn việc mua bù slot (trước đây agent đứng im hàng giờ).
+  assert.match(runnerSrc, /vẫn tiếp tục mua bù slot/);
+  assert.match(runnerSrc, /nextPendingCancelAt/);
+  assert.doesNotMatch(runnerSrc, /không đặt thêm đơn mới, thử lại sau/);
+  // Theo dõi task có sẵn không được coi E006/prompt của bot là lỗi của đơn vừa gửi.
+  assert.match(runnerSrc, /monitorOnly: true/);
+  // Bot rate-limit thì đọc lại /stop, không gửi mua dồn.
+  assert.match(runnerSrc, /result\.rateLimited/);
+  // Log rõ vị trí trước khi hủy (trước đây chỉ log mã/giá, không biết vị trí mấy).
+  assert.match(runnerSrc, /Hủy đơn \$\{success\.code\} vì vị trí \$\{success\.position\}/);
+  assert.match(runnerSrc, /đơn vị trí xấu từ log chat/);
+  // Quét đơn muộn phải dùng cả sessionPlayers, không chỉ task còn trong /stop.
+  assert.match(runnerSrc, /sessionPlayers: \[\.\.\.sessionPlayers\.values\(\)\]/);
+  assert.match(runnerSrc, /onBadPositions: handleStrayBadPositions/);
+  assert.match(runnerSrc, /function collectLateBadPositions/);
+  // Đơn đã hủy qua đường thường cũng phải được đánh dấu để vòng quét không
+  // mở TTCN lại chỉ vì log vẫn còn trong cửa sổ chat.
+  assert.match(runnerSrc, /tried instanceof Set/);
+  // Hủy lại đơn treo phải dùng baseline đầu phiên, không dùng baseline lượt
+  // (baseline lượt đã chứa chính đơn mới nên sẽ loại trừ nhầm).
+  assert.match(runnerSrc, /const pendingBaseline = sessionTtcnBaselineIds \|\| knownOrderIds/);
+
+  const ttcnSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/ttcn.js"),
+    "utf8"
+  );
+  assert.match(ttcnSrc, /openTtcnList\(page, rl, \{ attempts: 1 \}\)/);
+  assert.match(ttcnSrc, /refreshMenu: true, attempts: 1/);
+  // Lượt mở đầu tiên phải dùng nút "Auto Mua Phôi" cũ nếu còn hiển thị; chỉ
+  // lần mở lại (iframe trắng) hoặc E002 mới được gửi /tn. Trước đây mỗi lượt dò
+  // TTCN/hủy đơn đều gửi /tn dù không cần (log 05:34, 05:36, 05:47).
+  assert.match(ttcnSrc, /refresh: attempt > 1/);
+  assert.doesNotMatch(ttcnSrc, /refresh: refreshMenu \|\| attempt > 1/);
+  // Dòng "Đang hủy đơn TTCN" phải kèm vị trí mua.
+  assert.match(ttcnSrc, /vị trí \$\{cancelPositionText\}/);
+
+  const menuSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/menu.js"),
+    "utf8"
+  );
+  // Không gán lại biến const (lỗi cũ khi token E002) và dùng lại locator đã
+  // tìm được thay vì gọi ensureFeatureButton lần hai.
+  assert.match(menuSrc, /button = null/);
+  assert.match(menuSrc, /button && attempt === 0/);
+  assert.doesNotMatch(menuSrc, /^\s+target = await ensureFeatureButton/m);
+  // /tn im lặng thì dùng lại nút menu cũ thay vì chờ hết 45s rồi báo lỗi.
+  assert.match(menuSrc, /MENU_FALLBACK_MS = 15_000/);
+  assert.match(menuSrc, /dùng lại nút cũ đang hiển thị/);
+  // Lượt dò TTCN phụ không được gửi /tn khi mất nút menu (log 09:58, 10:45).
+  assert.match(menuSrc, /allowTn = true/);
+  assert.match(menuSrc, /không gửi \/tn trong lúc chờ đơn ICON/);
+  assert.match(ttcnSrc, /allowTn/);
+
+  assert.equal(config.iconBuy.purchaseSoftTimeoutSeconds, 1800);
+  assert.equal(config.iconBuy.monitorWaitSeconds, 900);
+  assert.doesNotThrow(() => validateConfig());
+});
+
+test("purchase wait ignores bot prompts while only monitoring existing tasks", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const orderSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/order.js"),
+    "utf8"
+  );
+  // Prompt/E006/rate-limit chỉ là lỗi của lượt vừa gửi; khi chỉ theo dõi task
+  // có sẵn thì không được throw làm dừng luồng ICON.
+  assert.match(orderSrc, /monitorOnly = false/);
+  assert.match(orderSrc, /if \(!monitorOnly && PROMPT_RE\.test/);
+  assert.match(orderSrc, /if \(!monitorOnly && RATE_LIMIT_RE\.test/);
+  assert.match(orderSrc, /if \(!monitorOnly\) \{[\s\S]{0,400}?E006/);
+  // Rate-limit không được vừa log "thử lại" vừa throw kết thúc phiên.
+  assert.doesNotMatch(orderSrc, /chờ \$\{delay \/ 1_000\}s rồi thử lại/);
+  assert.match(orderSrc, /rateLimited: true/);
+});
+
+test("reattach keeps the same chat tracker after a Telegram reload", async () => {
+  // Sau reload, document mới làm mất MutationObserver. Tracker phải được giữ
+  // nguyên để luồng ICON đang giữ reader cũ vẫn đọc được vị trí mua và lệnh dừng.
+  const tracker = createChatTextTracker("chat cũ");
+  tracker.binding = "__fo4ChatTextChangedTest";
+  const page = {
+    evaluate: async () => true,
+    locator: () => ({
+      innerText: async () => "chat cũ\nBot đã đặt mua 101000246; vị trí: 2"
+    })
+  };
+  chatTextReaders.set(page, tracker);
+
+  assert.equal(await reattachChatObserver(page), true);
+  assert.equal(chatTextReaders.get(page), tracker);
+  assert.match(tracker.snapshot().text, /vị trí: 2/);
+});
+
+test("hard reload uses page.reload instead of same-hash goto and re-arms tracking", async () => {
+  // page.goto(BOT_URL) khi chỉ khác hash là same-document nên Telegram Web K vẫn
+  // kẹt ở màn hình "Chats" (log 01:48-03:43). Phải reload thật.
+  let reloads = 0;
+  let navigations = 0;
+  const page = {
+    url: () => "https://web.telegram.org/k/#@Nguyenanh_fo4_bot",
+    reload: async () => { reloads += 1; },
+    goto: async () => { navigations += 1; },
+    getByRole: () => ({ count: async () => 0 }),
+    evaluate: async () => true,
+    locator: () => ({ innerText: async () => "chat sau reload" })
+  };
+  const tracker = createChatTextTracker("chat trước reload");
+  tracker.binding = "__fo4ChatTextChangedReload";
+  chatTextReaders.set(page, tracker);
+
+  await hardReloadTelegram(page);
+  assert.equal(reloads, 1);
+  assert.equal(navigations, 0);
+  assert.equal(chatTextReaders.get(page), tracker);
+  assert.equal(tracker.snapshot().text, "chat sau reload");
+});
+
+test("hard reload reopens the bot URL when Telegram dropped the chat hash", async () => {
+  // Ảnh màn hình 03:xx: thanh địa chỉ chỉ còn web.telegram.org/k/ và hộp
+  // "Chats" mở -> reload về trang chủ, phải goto URL bot để mở lại chat.
+  let reloads = 0;
+  let navigations = 0;
+  const page = {
+    url: () => "https://web.telegram.org/k/",
+    reload: async () => { reloads += 1; },
+    goto: async () => { navigations += 1; },
+    getByRole: () => ({ count: async () => 0 }),
+    evaluate: async () => true,
+    locator: () => ({ innerText: async () => "chat bot" })
+  };
+  chatTextReaders.set(page, createChatTextTracker("chat cũ"));
+
+  await hardReloadTelegram(page);
+  assert.equal(reloads, 1);
+  assert.equal(navigations, 1);
+});
+
+test("stop baseline reopens the bot chat before snapshotting message ids", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const tasksSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/tasks.js"),
+    "utf8"
+  );
+  const ensureIdx = tasksSrc.indexOf("await ensureMessageComposer(page, rl);");
+  const idsIdx = tasksSrc.indexOf("const baselineIds = await getVisibleMessageIds(page)");
+  assert.ok(ensureIdx > -1, "readStopMenu must reopen the chat before reading ids");
+  assert.ok(idsIdx > ensureIdx, "chat must be opened before baseline id snapshot");
+  // Không còn im lặng trả null khi trang không có bubble.
+  assert.match(tasksSrc, /Không đọc được nội dung chat/);
+
+  const composerSrc = fs.readFileSync(
+    path.join(__dirname, "features/composer.js"),
+    "utf8"
+  );
+  assert.match(composerSrc, /hardReloadTelegram\(page\)/);
+
+  const runnerSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/runner.js"),
+    "utf8"
+  );
+  assert.match(runnerSrc, /reloadTelegramForRecovery/);
+  assert.match(runnerSrc, /hardReloadTelegram\(page\)/);
+  // Kẹt quá lâu thì báo controller mở lại phiên thay vì lặp /stop vô hạn.
+  assert.match(runnerSrc, /STOP_READ_MAX_FAILURES/);
+  assert.match(runnerSrc, /TELEGRAM_CHAT_UNREADABLE/);
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  assert.match(controllerSrc, /error\?\.code === "TELEGRAM_CHAT_UNREADABLE"/);
+  assert.match(controllerSrc, /sessionUnavailable = true/);
+});
+
+test("reload reset does not replay an old control command from the chat tail", () => {
+  const tracker = createChatTextTracker("màn hình Chats không có tin nhắn");
+  tracker.arm();
+  const seen = [];
+  tracker.setCommandHandler((command) => seen.push(command));
+
+  // Trang vừa render lại: đuôi chat có /stopagent cũ, không được coi là lệnh mới.
+  tracker.reset("lịch sử chat\n/stopagent");
+  tracker.publish("lịch sử chat\n/stopagent\nBot: đã dừng");
+  assert.deepEqual(seen, []);
+
+  // Tin nhắn mới thật sự vẫn được nhận sau đó.
+  tracker.publish("lịch sử chat\n/stopagent\nBot: đã dừng\n/startagent");
+  assert.deepEqual(seen, ["startagent"]);
 });

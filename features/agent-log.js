@@ -7,7 +7,12 @@ const dataDir = path.join(
   process.env.LOCALAPPDATA || os.homedir(),
   "FO4PurchaseAgent"
 );
-const logPath = path.join(dataDir, "agent.log");
+// Khi chạy `node --test`, ghi sang file riêng để log vận hành không bị lẫn
+// các dòng mô phỏng của test (trước đây test từng ghi "sau 0 phút" vào log live).
+const logPath = path.join(
+  dataDir,
+  process.env.NODE_TEST_CONTEXT ? "agent.test.log" : "agent.log"
+);
 
 function log(message) {
   const line = `[${new Date().toISOString()}] ${message}`;

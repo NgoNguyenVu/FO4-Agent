@@ -1,7 +1,7 @@
 {
   "ovrMin": 118,
   "ovrMax": 123,
-  "maxPriceBP": 666666,
+  "maxPriceBP": 777777,
   "quantityPerAttempt": 3,
   "maxPerCycle": 14,
   "maxCycleWaitMinutes": 180,
@@ -27,6 +27,9 @@
     "cancelPositionAbove": 3,
     "favoritesTimeoutSeconds": 60,
     "purchaseTimeoutSeconds": 0,
+    "purchaseSoftTimeoutSeconds": 1800,
+    "monitorWaitSeconds": 900,
+    "inventoryCheckIntervalSeconds": 1800,
     "ttcnTimeoutSeconds": 60,
     "batchIntervalSeconds": 2,
     "continuous": true,

@@ -25,6 +25,7 @@ const {
   parsePurchaseSuccesses,
   filterIconPurchaseSuccesses,
   mergePurchaseSuccesses,
+  findLatestKnownPositions,
   getLatestBotError,
   isOrderLimitError,
   parseRetryAfterSeconds
@@ -38,6 +39,26 @@ const {
 const STALE_TOKEN_RE = /E002|Token không hợp lệ|token không hợp lệ/i;
 const RATE_LIMIT_RE = /thao tác quá nhanh|chờ\s*\d+\s*s\s*rồi thử lại/i;
 const PROMPT_RE = /Vui lòng nhập danh sách mã cầu thủ|MãCầuThủ\s+MứcThẻ\s+SốLượng/i;
+
+// TTCN chỉ là nguồn xác nhận dự phòng: log chat đã có mã, giá và vị trí mua.
+// Trong lúc bot đang xử lý đơn ICON, /tn thường không được trả lời (45s) nên
+// mở mini-app chỉ tạo spam. Vì vậy chỉ dò đúng một lần, muộn (10 phút) để bắt
+// trường hợp log chat bị Telegram cắt; bình thường đơn đã xác nhận qua chat
+// trước mốc này nên không mở TTCN lần nào.
+const TTCN_FIRST_CHECK_MS = 600_000;
+const TTCN_MAX_INTERVAL_MS = 300_000;
+// Gặp E006 khi mở mini-app thì ngưng đọc TTCN một lúc, tránh lặp lỗi token.
+const TTCN_ERROR_COOLDOWN_MS = 600_000;
+// Tối đa 1 lần dò TTCN cho mỗi lượt đặt mua. Thất bại thì chỉ đọc log chat;
+// không gửi /tn lặp lại trong lúc bot còn đang xử lý đơn.
+const TTCN_MAX_PROBES = 1;
+// Nhịp báo tiến độ khi chờ đơn ICON: 5 phút/lần thay vì 1 phút/lần cho đỡ nhiễu.
+const PURCHASE_HEARTBEAT_MS = 300_000;
+// Bot có thể gửi "Vị trí mua" của một đơn cũ rất muộn, trong lúc agent đang chờ
+// đơn khác (đơn 101005099 vị trí 4 đến lúc 11:03 khi đang chờ 101048940). Quét
+// log chat định kỳ cho mọi mã đã đặt trong phiên để hủy ngay, không đợi log rơi
+// đúng lượt chờ hoặc task còn hiện trong /stop.
+const STRAY_POSITION_SCAN_MS = 15_000;
 
 function shorten(text, max = 600) {
   return String(text || "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -208,10 +229,30 @@ async function waitForPurchaseResults(
   baselineText,
   players,
   baselineIds = null,
-  { isStopRequested = null, ttcnBaselineIds = null, ui = null, rl = null } = {}
+  {
+    isStopRequested = null,
+    ttcnBaselineIds = null,
+    ui = null,
+    rl = null,
+    maxWaitMs = Infinity,
+    quietTimeout = false,
+    // Chế độ chỉ theo dõi task có sẵn (không vừa gửi lệnh mua). Mọi thông báo
+    // lỗi/prompt của bot là của task đang chạy, không phải của đơn vừa gửi.
+    monitorOnly = false,
+    // Danh sách mã đã đặt trong phiên + callback hủy: quét vị trí xấu của các
+    // đơn cũ ngay trong lúc vẫn đang chờ đơn hiện tại.
+    scanPlayers = null,
+    onBadPositions = null
+  } = {}
 ) {
   const deadline = config.iconBuy.purchaseTimeoutSeconds > 0
     ? Date.now() + config.iconBuy.purchaseTimeoutSeconds * 1_000
+    : Infinity;
+  // Watchdog mềm: hết hạn thì trả về để runner đọc lại /stop và chuyển sang
+  // theo dõi task, KHÔNG hủy task và KHÔNG coi là thất bại. Tránh trường hợp
+  // bot không gửi log (đã gặp đơn 191 phút) làm cả phiên treo vô hạn.
+  const softDeadline = Number.isFinite(maxWaitMs)
+    ? Date.now() + Math.max(0, maxWaitMs)
     : Infinity;
   let successes = [];
   let latestText = reader.snapshot().text;
@@ -223,8 +264,14 @@ async function waitForPurchaseResults(
   let fatalError = null;
   let fatalStopAt = Infinity;
   const waitStartedAt = Date.now();
-  let nextHeartbeatAt = waitStartedAt + 60_000;
-  let nextTtcnCheckAt = waitStartedAt + 15_000;
+  let nextHeartbeatAt = waitStartedAt + PURCHASE_HEARTBEAT_MS;
+  let ttcnCheckIntervalMs = TTCN_FIRST_CHECK_MS;
+  let ttcnErrorCooldownMs = 0;
+  // Không có baseline TTCN (chế độ chỉ theo dõi task có sẵn) thì không thể dò:
+  // đặt 0 để khỏi in dòng "Đã dò TTCN 1 lần" gây hiểu nhầm là đã mở mini-app.
+  let ttcnProbesLeft = ttcnBaselineIds ? TTCN_MAX_PROBES : 0;
+  let nextTtcnCheckAt = waitStartedAt + ttcnCheckIntervalMs;
+  let nextStrayScanAt = waitStartedAt;
 
   const readTtcnMatches = async () => {
     if (!ttcnBaselineIds) return [];
@@ -233,7 +280,16 @@ async function waitForPurchaseResults(
     const read = async () => {
       let frame = null;
       try {
-        frame = await openTtcnList(page, rl);
+        // Dùng lại nút menu sẵn có nếu còn hiển thị (không gửi /tn). Nút cũ hết
+        // token (E002) hay mini-app ra iframe trắng thì openAutoBuyFrame tự xin
+        // menu mới ở lần mở lại.
+        // Lượt dò TTCN phụ trong lúc chờ đơn: chỉ dùng nút menu cũ nếu còn
+        // hiển thị, tuyệt đối không gửi /tn (nguồn spam 09:58, 10:45).
+        frame = await openTtcnList(page, rl, {
+          refreshMenu: false,
+          attempts: 1,
+          allowTn: false
+        });
         const orders = await readTtcnOrders(frame);
         const knownIds = new Set(ttcnBaselineIds);
         return orders
@@ -276,6 +332,24 @@ async function waitForPurchaseResults(
         stopped: true
       };
     }
+    if (Date.now() >= softDeadline) {
+      const found = new Set(successes.map((item) => item.code));
+      const missing = players.filter((player) => !found.has(player.code));
+      if (missing.length && maxWaitMs >= 60_000 && !quietTimeout) {
+        log(
+          `Chưa thấy log đặt mua cho ${missing.map((p) => p.code).join(", ")} ` +
+            `sau ${Math.max(1, Math.round(maxWaitMs / 60_000))} phút; giữ nguyên ` +
+            "task và đọc lại /stop để kiểm tra slot thay vì chờ vô hạn."
+        );
+      }
+      return {
+        successes,
+        missing,
+        fresh: lastFresh,
+        fatalError,
+        timedOut: true
+      };
+    }
     const update = await waitForChatChange(page, reader, reader.snapshot().version, 1_000);
     if (update) latestText = update.text;
     // Ưu tiên message id mới để không bỏ sót log khi Telegram trim mất mốc
@@ -287,6 +361,39 @@ async function waitForPurchaseResults(
     }
     if (!fresh) fresh = getFreshSince(baselineText, latestText) || "";
     if (fresh) lastFresh = fresh;
+    // Quét vị trí xấu của các đơn đã đặt trong phiên (kể cả đơn của lượt
+    // trước) ngay trong lúc đang chờ lượt hiện tại. Không quét mỗi vòng để
+    // tránh parse chat liên tục; callback tự chống hủy trùng.
+    if (
+      typeof onBadPositions === "function" &&
+      Array.isArray(scanPlayers) &&
+      scanPlayers.length &&
+      Date.now() >= nextStrayScanAt
+    ) {
+      nextStrayScanAt = Date.now() + STRAY_POSITION_SCAN_MS;
+      const knownPositions = findLatestKnownPositions(
+        reader.snapshot().text,
+        scanPlayers,
+        config.iconBuy.grade,
+        config.iconBuy.quantity
+      );
+      const badPositions = [];
+      for (const [code, position] of knownPositions) {
+        if (Number(position) <= Number(config.iconBuy.cancelPositionAbove)) {
+          continue;
+        }
+        badPositions.push({ code: String(code), position: Number(position) });
+      }
+      if (badPositions.length) {
+        try {
+          await onBadPositions(badPositions);
+        } catch (error) {
+          log(
+            `Không hủy được đơn vị trí xấu phát hiện khi chờ: ${error.message}`
+          );
+        }
+      }
+    }
     if (Date.now() >= nextHeartbeatAt) {
       const elapsedMinutes = Math.floor((Date.now() - waitStartedAt) / 60_000);
       const remainingMinutes = Number.isFinite(deadline)
@@ -299,19 +406,70 @@ async function waitForPurchaseResults(
             : `còn tối đa ${remainingMinutes} phút`) +
           "); không gửi mua lại."
       );
-      nextHeartbeatAt = Date.now() + 60_000;
+      nextHeartbeatAt = Date.now() + PURCHASE_HEARTBEAT_MS;
     }
-    if (Date.now() >= nextTtcnCheckAt) {
-      nextTtcnCheckAt = Date.now() + 30_000;
+    const allConfirmed =
+      successes.length > 0 &&
+      players.every((player) =>
+        successes.some((item) => item.code === player.code)
+      );
+    if (
+      ttcnProbesLeft > 0 &&
+      !allConfirmed &&
+      Date.now() >= nextTtcnCheckAt
+    ) {
+      ttcnProbesLeft -= 1;
       const ttcnMatches = await readTtcnMatches().catch((error) => {
         log(`Không đọc được TTCN để xác nhận đơn ICON: ${error.message}`);
+        if (/E006/i.test(error.message)) {
+          ttcnErrorCooldownMs = TTCN_ERROR_COOLDOWN_MS;
+          log(
+            `Tạm ngưng mở TTCN ${Math.round(TTCN_ERROR_COOLDOWN_MS / 60_000)} phút ` +
+              "để tránh lặp lỗi token E006."
+          );
+        }
         return [];
       });
       if (ttcnMatches.length) {
-        successes = mergePurchaseSuccesses(successes, ttcnMatches);
+        // Card TTCN không có vị trí mua. Bổ sung từ log chat cũ nếu log mới bị
+        // baseline bỏ qua (theo dõi task có sẵn sau restart/E006), để vẫn hủy
+        // được đơn ở vị trí xấu thay vì "không xác định vị trí".
+        const historicalPositions = findLatestKnownPositions(
+          reader.snapshot().text,
+          players,
+          config.iconBuy.grade,
+          config.iconBuy.quantity
+        );
+        const enrichedMatches = ttcnMatches.map((item) => {
+          const position = historicalPositions.get(String(item.code));
+          if (position == null) return item;
+          log(`Bổ sung vị trí ${position} cho ${item.code} từ log chat trước đó.`);
+          return { ...item, position, positionError: null };
+        });
+        successes = mergePurchaseSuccesses(successes, enrichedMatches);
         log(
           `Đã xác nhận ${ttcnMatches.length} đơn ICON trực tiếp trên TTCN ` +
             "(không phụ thuộc thông báo chat)."
+        );
+        ttcnCheckIntervalMs = TTCN_FIRST_CHECK_MS;
+        // Không reset số lần dò: mỗi lượt chờ chỉ dò TTCN tối đa
+        // TTCN_MAX_PROBES lần. Nếu còn mã chưa xác nhận, lần chờ sau (sau khi
+        // đọc lại /stop) sẽ tạo lượt dò mới, tránh mở mini-app mỗi 5 phút.
+      } else {
+        // Không có đơn mới: giãn gấp đôi, tối đa 5 phút/lần để không spam
+        // mini-app và không sinh E006 token.
+        ttcnCheckIntervalMs = Math.min(
+          ttcnCheckIntervalMs * 2,
+          TTCN_MAX_INTERVAL_MS
+        );
+      }
+      nextTtcnCheckAt =
+        Date.now() + Math.max(ttcnCheckIntervalMs, ttcnErrorCooldownMs);
+      ttcnErrorCooldownMs = 0;
+      if (ttcnProbesLeft <= 0) {
+        log(
+          `Đã dò TTCN ${TTCN_MAX_PROBES} lần không thấy thêm đơn ICON; ` +
+            "ngừng mở mini-app để tránh spam /tn, chỉ đọc log chat."
         );
       }
     }
@@ -341,41 +499,61 @@ async function waitForPurchaseResults(
     }
     const found = new Set(successes.map((item) => item.code));
     const botError = getLatestBotError(fresh || "");
-    // E006/E010 có thể đến sau khi bot đã đặt một phần danh sách. Không throw
-    // ngay: đánh dấu lỗi, chờ tối đa 10 giây để nhận log đặt mua, rồi để runner
-    // hủy các đơn vị trí xấu trước khi dừng phiên.
-    if (/E006/i.test(botError || "")) {
-      fatalError =
-        fatalError || `Bot báo E006 khi đặt mua ICON (${shorten(botError, 120)}).`;
-      fatalStopAt = Math.min(fatalStopAt, Date.now() + 10_000);
-    }
-    if (isOrderLimitError(fresh || "")) {
-      // Chạm giới hạn lệnh đang chạy: không đặt được thêm, dừng ngay thay vì
-      // chờ đủ purchaseTimeoutSeconds. Không tự hủy lệnh của Auto Mua.
-      fatalError =
-        fatalError ||
-        "Tài khoản đã đạt giới hạn lệnh mua đang chạy (E007); chưa đặt thêm đơn nào.";
-      fatalStopAt = Math.min(fatalStopAt, Date.now());
-    }
-    if (botError && /E010|Vip Member|VIP Member/i.test(fresh || "")) {
-      fatalError =
-        fatalError || `Bot từ chối do VIP/giới hạn (${shorten(botError, 120)}).`;
-      fatalStopAt = Math.min(fatalStopAt, Date.now() + 10_000);
+    // Ở chế độ theo dõi task có sẵn, bot có thể gửi E006 / "nhập danh sách" /
+    // thông báo giới hạn vì lý do của task đang chạy. Trước đây các câu này bị
+    // coi là lỗi của "đơn vừa gửi" và làm cả luồng ICON dừng (log 11:07:12).
+    if (!monitorOnly) {
+      // E006/E010 có thể đến sau khi bot đã đặt một phần danh sách. Không throw
+      // ngay: đánh dấu lỗi, chờ tối đa 10 giây để nhận log đặt mua, rồi để runner
+      // hủy các đơn vị trí xấu trước khi dừng phiên.
+      if (/E006/i.test(botError || "")) {
+        fatalError =
+          fatalError || `Bot báo E006 khi đặt mua ICON (${shorten(botError, 120)}).`;
+        fatalStopAt = Math.min(fatalStopAt, Date.now() + 10_000);
+      }
+      if (isOrderLimitError(fresh || "")) {
+        // Chạm giới hạn lệnh đang chạy: không đặt được thêm, dừng ngay thay vì
+        // chờ đủ purchaseTimeoutSeconds. Không tự hủy lệnh của Auto Mua.
+        fatalError =
+          fatalError ||
+          "Tài khoản đã đạt giới hạn lệnh mua đang chạy (E007); chưa đặt thêm đơn nào.";
+        fatalStopAt = Math.min(fatalStopAt, Date.now());
+      }
+      if (botError && /E010|Vip Member|VIP Member/i.test(fresh || "")) {
+        fatalError =
+          fatalError || `Bot từ chối do VIP/giới hạn (${shorten(botError, 120)}).`;
+        fatalStopAt = Math.min(fatalStopAt, Date.now() + 10_000);
+      }
     }
     if (!successes.length && !fatalError) {
-      if (RATE_LIMIT_RE.test(fresh || "")) {
+      if (!monitorOnly && RATE_LIMIT_RE.test(fresh || "")) {
+        // Bot từ chối vì thao tác nhanh. Không gửi lại ngay (có thể tạo đơn
+        // trùng nếu bot đã xếp lệnh vào hàng đợi): chờ hết thời gian bot yêu
+        // cầu rồi trả về để runner đọc lại /stop và quyết định.
         const delay = parseRetryAfterSeconds(fresh) * 1_000 + 500;
-        log(`Bot giới hạn thao tác đặt mua ICON; chờ ${delay / 1_000}s rồi thử lại.`);
+        log(
+          `Bot giới hạn thao tác đặt mua ICON; chờ ${delay / 1_000}s rồi đọc lại ` +
+            "/stop để kiểm tra task thay vì gửi lại ngay."
+        );
         await page.waitForTimeout(delay);
-        throw makeFlowError("Bot giới hạn thao tác đặt mua ICON.", "ICON_RATE_LIMITED");
+        return {
+          successes,
+          missing: players,
+          fresh: lastFresh,
+          fatalError,
+          rateLimited: true
+        };
       }
-      if (PROMPT_RE.test(fresh || "")) {
+      if (!monitorOnly && PROMPT_RE.test(fresh || "")) {
         throw makeFlowError(
           "Bot vẫn yêu cầu nhập danh sách sau khi gửi; chưa nhận được đơn.",
           "ICON_UI_NOT_READY"
         );
       }
-      if (/không hợp lệ|sai định dạng|sai cú pháp|không đúng định dạng/i.test(fresh || "")) {
+      if (
+        !monitorOnly &&
+        /không hợp lệ|sai định dạng|sai cú pháp|không đúng định dạng/i.test(fresh || "")
+      ) {
         throw makeFlowError(
           `Bot từ chối danh sách cầu thủ: ${shorten(fresh)}`,
           "ICON_BOT_REJECTED"
@@ -420,7 +598,13 @@ async function placeIconOrders(
   page,
   rl,
   players,
-  { ui = null, isStopRequested = null, ttcnBaselineIds = null } = {}
+  {
+    ui = null,
+    isStopRequested = null,
+    ttcnBaselineIds = null,
+    scanPlayers = null,
+    onBadPositions = null
+  } = {}
 ) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
@@ -444,7 +628,18 @@ async function placeIconOrders(
       baseline.text,
       players,
       baselineIds,
-      { isStopRequested, ttcnBaselineIds, ui, rl }
+      {
+        isStopRequested,
+        ttcnBaselineIds,
+        ui,
+        rl,
+        maxWaitMs:
+          config.iconBuy.purchaseSoftTimeoutSeconds > 0
+            ? config.iconBuy.purchaseSoftTimeoutSeconds * 1_000
+            : Infinity,
+        scanPlayers,
+        onBadPositions
+      }
     );
   } catch (error) {
     // Đã gửi lệnh mua thì không được thử lại mù: retry có thể tạo thêm task

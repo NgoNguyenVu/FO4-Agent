@@ -65,7 +65,8 @@ const {
   getLatestWorkerId,
   getLatestAutoBuyStatus,
   getLatestActivityMarker,
-  isEarlyCompletion
+  isEarlyCompletion,
+  countInventoryReceivedNotices
 } = require("./buy");
 const {
   runSingleUpgrade,
@@ -105,6 +106,12 @@ async function main() {
   let pendingBuyCompletion = null;
   let initialWorkerCheckDone = false;
   let inventoryKnownAvailable = false;
+  // Mốc sớm nhất được mở mini-app kiểm tra kho lần kế tiếp. Tránh mở mini-app
+  // liên tục khi kho còn 0 icon (trước đây kiểm tra 3 lần mỗi ~20-30s).
+  let nextInventoryCheckAt = 0;
+  // Số receipt "nhận cầu thủ vào kho" đã thấy; tăng lên thì kiểm tra kho ngay
+  // thay vì chờ hết nhịp 30 phút.
+  let inventoryReceiptSeen = 0;
   // Số lần bấm lại nút Bắt đầu khi bot lag làm mất ACK (không có worker chạy).
   let startAckRetries = 0;
   // Đếm số lần mini-app trắng/không render để tự reload Telegram Web thay vì
@@ -143,6 +150,12 @@ async function main() {
         return result;
       })
       .catch((error) => {
+        if (error?.code === "TELEGRAM_CHAT_UNREADABLE") {
+          // Chat Telegram bị đóng/kẹt quá lâu: mở lại phiên ở vòng kế tiếp
+          // thay vì để luồng ICON lặp /stop vô hạn.
+          log("Không đọc được chat Telegram sau nhiều lần thử; mở lại phiên Telegram.");
+          sessionUnavailable = true;
+        }
         if (!iconStopRequested && !remoteResetRequested) {
           logError(`Luồng ICON dừng do lỗi: ${error.stack || error.message}`);
         }
@@ -197,6 +210,7 @@ async function main() {
         ui
       );
       inventoryKnownAvailable = false;
+      nextInventoryCheckAt = 0;
       agentActive = pivot.agentActive;
       if (pivot.mode && pivot.mode !== "icon") mode = pivot.mode;
       return false;
@@ -206,27 +220,37 @@ async function main() {
     return next.openNext;
   };
 
+  // checkInventoryIcons có thể không xác nhận được dữ liệu kho (mini-app đang
+  // tải lại, form render nhưng chưa có card). Đó là lỗi tạm thời của mini-app,
+  // không phải lỗi chí mạng: giữ vòng tổng sống và kiểm tra lại nhịp sau thay
+  // vì làm sập cả agent (từng gặp INVENTORY_READ_UNCONFIRMED lúc 06:29).
+  //
+  // Mỗi lần kiểm tra chỉ mở mini-app MỘT lượt. Trước đây hàm này thử 3 lần
+  // cách nhau 10s, cộng với vòng tổng chờ 15s nên mini-app bị mở liên tục
+  // (~20-30s/lần) khi kho còn 0 icon. Nhịp kiểm tra giờ do
+  // iconBuy.inventoryCheckIntervalSeconds quy định (mặc định 30 phút).
   const checkMasterInventory = async () => {
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      await ui.acquire();
-      let count;
-      try {
-        count = await checkInventoryIcons(page, rl);
-      } finally {
-        ui.release();
-      }
-      if (count > 0) return true;
-      if (attempt < 3) {
-        log(
-          `Chưa thấy ICON mới trong kho (lần ${attempt}/3); ` +
-            "chờ bot nhận cầu thủ rồi kiểm tra lại."
-        );
-        await new Promise((resolve) => setTimeout(resolve, 10_000));
-      }
+    await ui.acquire();
+    let count = null;
+    try {
+      count = await checkInventoryIcons(page, rl);
+    } catch (error) {
+      if (error.code !== "INVENTORY_READ_UNCONFIRMED") throw error;
+      log(
+        "Chưa xác nhận được danh sách kho (mini-app chưa sẵn sàng); " +
+          "không kết luận hết icon, sẽ kiểm tra lại ở nhịp sau."
+      );
+      return false;
+    } finally {
+      ui.release();
     }
+    if (count > 0) return true;
     log(
-      "Chưa có ICON trong kho; giữ /startagent hoạt động và tiếp tục " +
-        "theo dõi TTCN cho tới khi một đơn được nhận."
+      "Kho chưa có ICON; giữ agent sống và kiểm tra lại sau " +
+        `${Math.max(
+          1,
+          Math.round(config.iconBuy.inventoryCheckIntervalSeconds / 60)
+        )} phút thay vì mở mini-app liên tục.`
     );
     return false;
   };
@@ -296,6 +320,10 @@ async function main() {
           mode = "master";
           initialWorkerCheckDone = false;
           inventoryKnownAvailable = false;
+          nextInventoryCheckAt = 0;
+          inventoryReceiptSeen = countInventoryReceivedNotices(
+            reader.snapshot().text
+          );
           upgradeBlockedTargetIds = new Set();
           miniAppRecoveryAttempts = 0;
           startAckRetries = 0;
@@ -422,11 +450,41 @@ async function main() {
       const units = config.maxPerCycle;
       const systemErrorCountBeforeMenu = countBotSystemErrors(reader.snapshot().text);
       ensureIconMonitor();
-      if (!inventoryKnownAvailable && !(await checkMasterInventory())) {
-        await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
-        continue;
+      if (!inventoryKnownAvailable) {
+        const now = Date.now();
+        if (now < nextInventoryCheckAt) {
+          // Receipt mới của bot = có cầu thủ vào kho: kiểm tra ngay, không chờ
+          // hết nhịp 30 phút.
+          const receiptCount = countInventoryReceivedNotices(
+            reader.snapshot().text
+          );
+          if (receiptCount > inventoryReceiptSeen) {
+            inventoryReceiptSeen = receiptCount;
+            nextInventoryCheckAt = 0;
+            log(
+              "Bot vừa báo nhận cầu thủ vào kho; kiểm tra kho ngay thay vì " +
+                "chờ hết nhịp kiểm tra."
+            );
+            continue;
+          }
+          // Chưa tới nhịp kiểm tra kho: nghỉ ngắn, không mở mini-app, không
+          // đặt mua phôi khi chưa biết có ICON trong kho.
+          await page.waitForTimeout(
+            Math.min(30_000, Math.max(1_000, nextInventoryCheckAt - now))
+          );
+          continue;
+        }
+        const ok = await checkMasterInventory();
+        const intervalSeconds = config.iconBuy.inventoryCheckIntervalSeconds;
+        nextInventoryCheckAt = intervalSeconds
+          ? Date.now() + intervalSeconds * 1_000
+          : 0;
+        if (!ok) {
+          await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
+          continue;
+        }
+        inventoryKnownAvailable = true;
       }
-      inventoryKnownAvailable = true;
       log("Đang kiểm tra menu Auto Mua Phôi và mini-app cho chu kỳ tiếp theo.");
       let startAckBaseline;
       let cycleBaselineBeforeStart;
@@ -631,6 +689,9 @@ async function main() {
         continue;
       }
       // Recovery chuẩn: dừng về idle, chờ Enter tại PC hoặc /resetagent từ xa.
+      // Dừng luồng ICON đang chờ nền trước, nếu không promise đó vẫn tiếp tục
+      // log "Đang chờ bot hoàn tất đơn ICON" mỗi 5 phút dù vòng tổng đã chết.
+      await stopIconMonitor("agent-error").catch(() => {});
       setWaitingForRecoveryPrompt(true);
       try {
         await promptWakeable(rl, "Nhấn Enter hoặc gửi /resetagent để agent khôi phục và thử lại...");

@@ -147,6 +147,24 @@ function mergePurchaseSuccesses(existing, incoming) {
   return [...byCode.values()];
 }
 
+// Vị trí mua chỉ có trong log chat, không có trên card TTCN. Khi theo dõi task
+// có sẵn (sau restart/E006) baseline chat có thể đã bỏ qua log đặt mua, nên
+// đọc lại log cũ trong cửa sổ chat để vẫn quyết định được hủy vị trí xấu.
+// Chỉ nhận log khớp đúng mã + grade + số lượng; log mới nhất theo mã thắng.
+function findLatestKnownPositions(text, players, grade, quantity) {
+  const positions = new Map();
+  for (const item of filterIconPurchaseSuccesses(
+    parsePurchaseSuccesses(text),
+    players,
+    grade,
+    quantity
+  )) {
+    if (item.position == null) continue;
+    positions.set(String(item.code), Number(item.position));
+  }
+  return positions;
+}
+
 function getLatestBotError(text) {
   const matches = [...String(text || "").matchAll(ERROR_CODE_RE)];
   return matches.length ? matches.at(-1)[0].trim() : null;
@@ -199,16 +217,21 @@ function parseTtcnCardText(text) {
 // Chọn đúng đơn mới để hủy. orderId có trong baseline là đơn cũ, tuyệt đối
 // không chọn. Nếu baseline không đọc được, chỉ chọn card khớp mã + grade và
 // đang có nút Hủy; caller phải ghi cảnh báo để người dùng biết rủi ro.
+// Ngoại lệ: success.orderId là orderId đã xác định chính xác từ lần hủy trước
+// (card đã được chọn đúng); khi đó baseline không được loại trừ nữa, nếu không
+// đơn xấu sẽ không bao giờ hủy được ở phiên/baseline sau.
 function selectOrderToCancel(orders, success, knownOrderIds = null) {
+  const explicitId =
+    success && success.orderId != null && success.orderId !== ""
+      ? String(success.orderId)
+      : null;
   const matches = (orders || []).filter((order) => {
     if (!order || !order.orderId) return false;
-    if (success.orderId && String(order.orderId) !== String(success.orderId)) {
-      return false;
-    }
+    if (explicitId && String(order.orderId) !== explicitId) return false;
     if (String(order.spid) !== String(success.code)) return false;
     if (Number(order.orderType) !== 1) return false;
     if (!/Hủy/i.test(String(order.action || ""))) return false;
-    if (knownOrderIds && knownOrderIds.has(order.orderId)) return false;
+    if (!explicitId && knownOrderIds && knownOrderIds.has(order.orderId)) return false;
     if (success.grade != null && order.grade != null && Number(order.grade) !== Number(success.grade)) {
       return false;
     }
@@ -273,6 +296,7 @@ module.exports = {
   parsePurchaseSuccesses,
   filterIconPurchaseSuccesses,
   mergePurchaseSuccesses,
+  findLatestKnownPositions,
   getLatestBotError,
   isOrderLimitError,
   parseRetryAfterSeconds,

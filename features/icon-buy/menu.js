@@ -24,6 +24,10 @@ const {
 
 const STALE_TOKEN_RE = /E002|Token không hợp lệ|token không hợp lệ/i;
 const RATE_LIMIT_RE = /thao tác quá nhanh|chờ\s*\d+\s*s\s*rồi thử lại/i;
+// Bot đôi khi không trả lời /tn (đã gặp: /stop trả lời bình thường nhưng /tn
+// im lặng). Sau khoảng này, dùng lại nút menu cũ còn hiển thị thay vì chờ hết
+// menuTimeoutSeconds rồi báo lỗi — nút cũ vẫn mở được mini-app TTCN.
+const MENU_FALLBACK_MS = 15_000;
 
 function makeFlowError(message, code) {
   const error = new Error(message);
@@ -60,36 +64,49 @@ async function waitForButtonByText(page, label, timeoutMs = 20_000) {
 // Tìm nút gần nhất trong chat; nếu không có thì gửi /tn đúng một lần và chờ
 // menu mới. Với `refresh`, bỏ qua nút cũ đang còn trong lịch sử và chỉ nhận nút
 // sau khi bot thật sự trả menu mới (tránh bấm lại đúng callback đã hết token).
-async function ensureFeatureButton(page, rl, label, { refresh = false } = {}) {
+// `allowTn=false` dùng cho lượt dò TTCN phụ: chỉ bấm nút cũ nếu còn, tuyệt đối
+// không gửi /tn trong lúc bot đang xử lý đơn.
+async function ensureFeatureButton(
+  page,
+  rl,
+  label,
+  { refresh = false, allowTn = true } = {}
+) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
 
   await scrollChatToBottom(page).catch(() => {});
-  if (!refresh) {
-    const existing = await findButtonByText(page, label);
-    if (existing) return existing;
+  const existingButton = await findButtonByText(page, label);
+  if (!refresh && existingButton) return existingButton;
+  if (!allowTn) {
+    throw makeFlowError(
+      `Không còn nút "${label}" hiển thị; không gửi /tn trong lúc chờ đơn ICON.`,
+      "MENU_BUSY"
+    );
   }
 
   const normalizedLabel = String(label).toLocaleLowerCase();
   const deadline = Date.now() + config.iconBuy.menuTimeoutSeconds * 1_000;
-  let attempts = 0;
-  while (Date.now() < deadline && attempts < 2) {
-    attempts += 1;
-    const baseline = reader.snapshot();
-    const composer = await ensureMessageComposer(page, rl);
-    await sendTnCommand(page, composer);
-    log(`Đã gửi /tn để lấy menu cho nút "${label}" (lần ${attempts}/2).`);
+  const fallbackAt = Date.now() + MENU_FALLBACK_MS;
+  // Mỗi lượt chỉ gửi /tn đúng một lần. Trước đây vòng lặp ở đây cộng với vòng
+  // lặp của openAutoBuyFrame khiến một lần đọc TTCN gửi 2 /tn liên tiếp, mỗi
+  // lần chờ 45s: vừa khóa UI, vừa dễ làm bot rate-limit/E006. Thất bại thì
+  // nhường cho backoff bên ngoài, không gửi dồn trong cùng một lượt.
+  const baseline = reader.snapshot();
+  const composer = await ensureMessageComposer(page, rl);
+  await sendTnCommand(page, composer);
+  log(`Đã gửi /tn để lấy menu cho nút "${label}".`);
 
-    let menuSeen = !refresh;
-    while (Date.now() < deadline) {
-      if (!menuSeen) {
-        const update = await waitForChatChange(
-          page,
-          reader,
-          reader.snapshot().version,
-          1_000
-        );
-        if (!update) continue;
+  let menuSeen = !refresh;
+  while (Date.now() < deadline) {
+    if (!menuSeen) {
+      const update = await waitForChatChange(
+        page,
+        reader,
+        reader.snapshot().version,
+        1_000
+      );
+      if (update) {
         const fresh = getFreshSince(baseline.text, update.text) || "";
         const botError = getLatestBotError(fresh);
         if (/E006/i.test(botError || "")) {
@@ -101,16 +118,28 @@ async function ensureFeatureButton(page, rl, label, { refresh = false } = {}) {
           await page.waitForTimeout(delay);
           break;
         }
-        if (!fresh.toLocaleLowerCase().includes(normalizedLabel)) continue;
-        menuSeen = true;
-        // Chờ Telegram render xong reply markup của tin menu mới.
-        await page.waitForTimeout(300);
+        if (fresh.toLocaleLowerCase().includes(normalizedLabel)) {
+          menuSeen = true;
+          // Chờ Telegram render xong reply markup của tin menu mới.
+          await page.waitForTimeout(300);
+        }
       }
-
-      const button = await findButtonByText(page, label);
-      if (button) return button;
-      await page.waitForTimeout(300);
+      if (!menuSeen && existingButton && Date.now() >= fallbackAt) {
+        // /tn không được trả lời: dùng lại nút cũ thay vì treo 45s rồi báo lỗi.
+        if (await existingButton.isVisible().catch(() => false)) {
+          log(
+            `Bot chưa trả menu mới cho "${label}" sau ` +
+              `${Math.round(MENU_FALLBACK_MS / 1_000)}s; dùng lại nút cũ đang hiển thị.`
+          );
+          return existingButton;
+        }
+      }
+      if (!menuSeen) continue;
     }
+
+    const button = await findButtonByText(page, label);
+    if (button) return button;
+    await page.waitForTimeout(300);
   }
 
   throw makeFlowError(
@@ -121,14 +150,31 @@ async function ensureFeatureButton(page, rl, label, { refresh = false } = {}) {
 
 // Bấm nút chức năng. Nếu callback token đã cũ (E002) thì xin menu mới rồi bấm
 // lại; nếu bot báo thao tác nhanh thì chờ đúng thời gian bot yêu cầu.
-async function clickFeatureButton(page, rl, label, { retries = 2 } = {}) {
+// `button` cho phép caller truyền locator đã tìm được để không gọi
+// ensureFeatureButton lần hai (tránh gửi thêm /tn khi menu vẫn còn).
+async function clickFeatureButton(
+  page,
+  rl,
+  label,
+  { retries = 2, refresh = false, button = null, allowTn = true } = {}
+) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
 
+  // Chỉ xin menu mới khi cần: lượt đầu theo `refresh` của caller, các lượt sau
+  // chỉ refresh nếu gặp E002. Tránh mỗi lần bấm lỗi lại gửi thêm một /tn.
+  let forceRefresh = refresh;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     // Luôn lấy locator từ menu gần nhất ngay trước khi bấm; locator truyền từ
     // caller có thể trỏ vào callback cũ sau khi Telegram render lại chat.
-    const target = await ensureFeatureButton(page, rl, label);
+    const target =
+      button && attempt === 0
+        ? button
+        : await ensureFeatureButton(page, rl, label, {
+            refresh: attempt === 0 ? refresh : forceRefresh,
+            allowTn
+          });
+    forceRefresh = false;
     const baseline = reader.snapshot();
     try {
       await withTimeout(target.click(), 30_000, `bấm nút ${label}`);
@@ -142,7 +188,7 @@ async function clickFeatureButton(page, rl, label, { retries = 2 } = {}) {
     const fresh = getFreshSince(baseline.text, reader.snapshot().text) || "";
     if (STALE_TOKEN_RE.test(fresh)) {
       log(`Menu "${label}" đã hết token (E002); gửi /tn lấy menu mới rồi thử lại.`);
-      target = await ensureFeatureButton(page, rl, label, { refresh: true });
+      forceRefresh = true;
       continue;
     }
     if (RATE_LIMIT_RE.test(fresh)) {

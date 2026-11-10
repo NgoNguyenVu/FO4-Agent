@@ -36,6 +36,12 @@ const config = {
     favoritesTimeoutSeconds: 60,
     // 0 = theo dõi không giới hạn khi bot chưa trả kết quả.
     purchaseTimeoutSeconds: 0,
+    // Chờ tối đa trước khi quay lại đọc /stop dù chưa có log đặt mua. Không
+    // hủy task, chỉ tránh treo vô hạn khi bot không gửi log (0 = tắt watchdog).
+    purchaseSoftTimeoutSeconds: 1800,
+    // Mỗi lần theo dõi task đang chạy chỉ chờ tối đa N giây rồi đọc lại /stop,
+    // tránh kẹt mãi ở một lần chờ log (0 = chờ không giới hạn như cũ).
+    monitorWaitSeconds: 900,
     ttcnTimeoutSeconds: 60,
     batchIntervalSeconds: 2,
     // Giữ tối đa 3 task ICON và theo dõi vô hạn; vòng chính mua phôi/nâng
@@ -47,6 +53,9 @@ const config = {
     captureTtcnBaseline: true,
     // Số task mua cho phép của bot; task thủ công đang chạy sẽ dùng slot này.
     maxTaskSlots: 3,
+    // Khoảng cách tối thiểu giữa hai lần mở mini-app kiểm tra kho khi chưa
+    // thấy ICON. 30 phút để không mở mini-app liên tục (trước đây ~15-30s/lần).
+    inventoryCheckIntervalSeconds: 1800,
     ...(rawConfig.iconBuy || {})
   }
 };
@@ -139,6 +148,15 @@ function validateIconBuyConfig() {
   requirePositiveInteger(s.menuTimeoutSeconds, "iconBuy.menuTimeoutSeconds");
   requirePositiveInteger(s.favoritesTimeoutSeconds, "iconBuy.favoritesTimeoutSeconds");
   requireNonNegativeInteger(s.purchaseTimeoutSeconds, "iconBuy.purchaseTimeoutSeconds");
+  requireNonNegativeInteger(
+    s.purchaseSoftTimeoutSeconds,
+    "iconBuy.purchaseSoftTimeoutSeconds"
+  );
+  requireNonNegativeInteger(s.monitorWaitSeconds, "iconBuy.monitorWaitSeconds");
+  requireNonNegativeInteger(
+    s.inventoryCheckIntervalSeconds,
+    "iconBuy.inventoryCheckIntervalSeconds"
+  );
   requirePositiveInteger(s.ttcnTimeoutSeconds, "iconBuy.ttcnTimeoutSeconds");
   requireNonNegativeInteger(s.batchIntervalSeconds, "iconBuy.batchIntervalSeconds");
   requirePositiveInteger(s.slotPollSeconds, "iconBuy.slotPollSeconds");

@@ -10,6 +10,7 @@ const {
   withTimeout,
   isBrowserSessionClosed
 } = require("../lib/playwright-utils");
+const { reattachChatObserver } = require("../lib/chat-runtime");
 const {
   BOT_COMMAND_DELAY_MS,
   TN_COMMAND_COOLDOWN_MS,
@@ -30,30 +31,12 @@ const BOT_CHAT_HASH_RE = new RegExp(
   `#(?:@?${BOT_USERNAME}|${BOT_USER_ID})\\b`,
   "i"
 );
-const BOT_CHAT_TITLE_RE = /BOT-TTCN-FO4/i;
+const BOT_CHAT_TITLE_RE =
+  /BOT[\s._-]*(?:TTCN|CHEN)?[\s._-]*F[O0C]4|Nguyenanh_fo4_bot/i;
 
-// Kiểm tra chat bot có đang thực sự mở không. Hash #@bot một mình KHÔNG đủ:
-// Telegram Web K có thể đóng cột chat, quay về trang chủ nhưng vẫn giữ hash cũ.
-// Khi đó Escape/click nhầm sẽ làm agent tưởng vẫn đang trong chat bot.
-async function isBotChatOpen(page) {
-  let hashMatches = false;
-  try {
-    hashMatches = BOT_CHAT_HASH_RE.test(page.url());
-  } catch { /* trang đã đóng */ }
-  let title = "";
-  let titleVisible = false;
-  try {
-    const titleLocator = page
-      .locator(".chat .topbar .peer-title, .chat-info .peer-title")
-      .first();
-    titleVisible = await titleLocator.isVisible();
-    if (titleVisible) title = await titleLocator.innerText({ timeout: 2_000 });
-  } catch { /* chưa render xong */ }
-  if (BOT_CHAT_TITLE_RE.test(title)) return true;
-  if (titleVisible && title.trim()) return false;
-  if (!hashMatches) return false;
-  // Hash còn nhưng không thấy topbar: chỉ coi là đang mở chat khi có ô nhập
-  // thật. Ở trang chủ/settings, topbar biến mất và composer cũng không có.
+// Ô nhập chat đang mở? Dùng làm bằng chứng cột chat thật sự mở (không phải
+// trang chủ còn giữ hash cũ).
+async function isComposerVisible(page) {
   try {
     return await page
       .locator(
@@ -64,6 +47,29 @@ async function isBotChatOpen(page) {
   } catch {
     return false;
   }
+}
+
+// Kiểm tra chat bot có đang thực sự mở không. Hash #@bot một mình KHÔNG đủ:
+// Telegram Web K có thể đóng cột chat, quay về trang chủ nhưng vẫn giữ hash cũ.
+// Tên hiển thị của bot có thể đổi (BOT-TTCN-FO4 -> BOT CHEN FC4), nên khi URL
+// đã trỏ đúng bot chỉ cần ô nhập chat đang mở; tránh page.goto lại mỗi lệnh.
+async function isBotChatOpen(page) {
+  let hashMatches = false;
+  try {
+    hashMatches = BOT_CHAT_HASH_RE.test(page.url());
+  } catch { /* trang đã đóng */ }
+  let title = "";
+  try {
+    const titleLocator = page
+      .locator(".chat .topbar .peer-title, .chat-info .peer-title")
+      .first();
+    if (await titleLocator.isVisible()) {
+      title = await titleLocator.innerText({ timeout: 2_000 });
+    }
+  } catch { /* chưa render xong */ }
+  if (BOT_CHAT_TITLE_RE.test(title)) return true;
+  if (hashMatches) return isComposerVisible(page);
+  return false;
 }
 
 // Telegram Web đôi khi hiện lớp "tips" onboarding (Appearance/Color theme...)
@@ -99,6 +105,44 @@ async function dismissTelegramTips(page) {
       await page.waitForTimeout(150);
     }
   } catch { /* không có lớp tips hoặc Telegram đổi UI */ }
+}
+
+// Tải lại CỨNG trang Telegram. page.goto(BOT_URL) khi URL chỉ khác hash là điều
+// hướng same-document nên không dựng lại UI; Telegram Web K có thể vẫn kẹt ở
+// màn hình "Chats" với cột chat đã đóng (log 01:48-03:43 kẹt hơn 2 giờ, mỗi
+// vòng chỉ đọc được 0 bubble nên không gửi /stop). reload() mới tạo document
+// mới và mở lại chat theo hash. Sau reload phải gắn lại MutationObserver để
+// vẫn nhận lệnh /stopagent, /resetagent từ xa.
+async function hardReloadTelegram(page) {
+  await withTimeout(
+    page.reload({ waitUntil: "domcontentloaded" }),
+    120_000,
+    "tải lại trang Telegram"
+  );
+  await dismissTelegramTips(page);
+  // reload() giữ nguyên URL hiện tại. Nếu Telegram đã xóa hash chat bot (thanh
+  // địa chỉ chỉ còn /k/, như ảnh màn hình màn hình "Chats") thì reload vẫn về
+  // trang chủ; phải điều hướng lại bằng URL chuẩn.
+  let hashMatches = false;
+  try {
+    hashMatches = BOT_CHAT_HASH_RE.test(page.url());
+  } catch { /* trang đã đóng, để caller xử lý */ }
+  if (!hashMatches) {
+    await withTimeout(
+      page.goto(BOT_URL, { waitUntil: "domcontentloaded" }),
+      120_000,
+      "mở lại chat bot sau khi tải lại trang"
+    );
+    await dismissTelegramTips(page);
+  }
+  try {
+    const reattached = await reattachChatObserver(page);
+    if (reattached === false) {
+      log("Chưa gắn lại được theo dõi chat sau khi tải lại trang Telegram.");
+    }
+  } catch (error) {
+    log(`Chưa gắn lại được theo dõi chat sau khi tải lại trang: ${error.message}`);
+  }
 }
 
 async function ensureBotChatOpen(page) {
@@ -321,6 +365,7 @@ module.exports = {
   BOT_URL,
   isBotChatOpen,
   dismissTelegramTips,
+  hardReloadTelegram,
   ensureBotChatOpen,
   sendBotCommand,
   sendTnCommand,

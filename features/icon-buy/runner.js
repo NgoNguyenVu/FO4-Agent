@@ -19,6 +19,7 @@ const { lookupFavoriteIconPlayers } = require("./favorites");
 const { placeIconOrders, waitForPurchaseResults } = require("./order");
 const { getVisibleMessageIds } = require("./chat-messages");
 const { captureTtcnBaseline, cancelIconOrders } = require("./ttcn");
+const { hardReloadTelegram } = require("../telegram-io");
 const {
   captureStopTaskBaseline,
   countRunningTaskSlots,
@@ -28,8 +29,24 @@ const {
   selectRandomIconPlayers,
   selectMonitoredIconTasks,
   getPositionAction,
-  decideCancelTargets
+  decideCancelTargets,
+  findLatestKnownPositions
 } = require("./patterns");
+
+const CANCEL_RETRY_DELAY_MS = 60_000;
+const CANCEL_MAX_ATTEMPTS = 2;
+// Đơn vị trí xấu chưa hủy được sẽ thử lại ở nhịp chậm dần (tối đa 30 phút).
+// KHÔNG chặn việc mua bù slot: trước đây chặn nên khi bot không trả /tn, agent
+// đứng im hàng giờ (log 19:xx-01:xx chỉ lặp /stop + /tn).
+const CANCEL_PENDING_MAX_BACKOFF_MS = 1_800_000;
+// Số lần liên tiếp không đọc được /stop trước khi báo controller mở lại phiên
+// Telegram. Với backoff tối đa 5 phút, 8 lần tương đương ~30-40 phút kẹt; không
+// để agent lặp vô hạn như log 01:48-03:43 (hơn 2 giờ chỉ đọc được 0 bubble).
+const STOP_READ_MAX_FAILURES = 8;
+
+function pendingCancelKey(item) {
+  return `${item.code}:${item.orderId || item.position || ""}`;
+}
 
 function makeStopSignal(reader, isStopRequested) {
   if (typeof isStopRequested === "function") {
@@ -42,7 +59,130 @@ function withUi(ui, fn) {
   return ui ? ui.withLock(fn) : fn();
 }
 
-async function placeWithRetry(page, rl, selected, stopSignal, ui, ttcnBaselineIds) {
+// Bot thường không trả menu /tn trong lúc còn xử lý đơn mua, nên lần mở TTCN
+// đầu tiên có thể thất bại dù đơn vẫn còn. Chờ một nhịp rồi thử lại đúng một
+// lần; mỗi lần chỉ mở mini-app một lượt để không spam /tn.
+async function cancelIconOrdersWithRetry(page, rl, targets, knownOrderIds, ui) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= CANCEL_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await withUi(ui, () =>
+        cancelIconOrders(page, rl, targets, knownOrderIds)
+      );
+    } catch (error) {
+      lastError = error;
+      const retryable = /MENU_BUSY|MINI_APP_NOT_OPENED|E006/i.test(
+        `${error.code || ""} ${error.message || ""}`
+      );
+      if (attempt >= CANCEL_MAX_ATTEMPTS || !retryable) throw error;
+      log(
+        `Chưa mở được TTCN để hủy đơn (${error.message}); chờ ` +
+          `${CANCEL_RETRY_DELAY_MS / 1_000}s rồi thử lại ` +
+          `(lần ${attempt + 1}/${CANCEL_MAX_ATTEMPTS}).`
+      );
+      await page.waitForTimeout(CANCEL_RETRY_DELAY_MS);
+    }
+  }
+  throw lastError;
+}
+
+// Quét toàn bộ cửa sổ chat để lấy vị trí xấu của mọi mã đã đặt trong phiên.
+// Bot có thể gửi "Vị trí mua" sau khi task đã kết thúc và rời /stop (đơn
+// 101005099 vị trí 4 lúc 11:03), nên nguồn phải là sessionPlayers chứ không
+// chỉ các task đang chạy.
+function collectLateBadPositions(reader, players, tried) {
+  const targets = [];
+  if (!Array.isArray(players) || !players.length) return targets;
+  const knownPositions = findLatestKnownPositions(
+    reader.snapshot().text,
+    players,
+    config.iconBuy.grade,
+    config.iconBuy.quantity
+  );
+  for (const [code, position] of knownPositions) {
+    if (Number(position) <= Number(config.iconBuy.cancelPositionAbove)) continue;
+    const key = `${code}:${position}`;
+    // Mỗi cặp mã:vị trí chỉ thử một lần, tránh mở TTCN lặp lại.
+    if (tried.has(key)) continue;
+    tried.add(key);
+    targets.push({
+      code: String(code),
+      grade: config.iconBuy.grade,
+      quantity: config.iconBuy.quantity,
+      total: config.iconBuy.quantity,
+      position: Number(position),
+      positionError: null
+    });
+  }
+  return targets;
+}
+
+async function cancelLateBadPositions(
+  page,
+  rl,
+  targets,
+  baselineForCancel,
+  tried,
+  ui
+) {
+  if (!targets.length) return { canceled: 0, failed: [] };
+  if (!baselineForCancel) {
+    // Chưa có baseline TTCN thì không phân biệt được đơn cũ/đơn phiên này;
+    // bỏ qua và xóa dấu để lần quét sau (đã có baseline) thử lại.
+    log(
+      "Thấy vị trí mua xấu trong log chat nhưng chưa có baseline TTCN; " +
+        "không hủy để tránh nhầm đơn cũ."
+    );
+    for (const item of targets) tried.delete(`${item.code}:${item.position}`);
+    return { canceled: 0, failed: [] };
+  }
+  log(
+    `Phát hiện ${targets.length} đơn vị trí xấu từ log chat: ` +
+      targets
+        .map((item) => `${item.code} (vị trí ${item.position})`)
+        .join(", ") +
+      "; hủy qua TTCN."
+  );
+  try {
+    const late = await cancelIconOrdersWithRetry(
+      page,
+      rl,
+      targets,
+      baselineForCancel,
+      ui
+    );
+    if (late.canceled.length) {
+      log(
+        `Đã hủy ${late.canceled.length} đơn vị trí xấu đọc từ log chat; ` +
+          "quay lại /stop để mua bù slot vừa trống."
+      );
+    }
+    if (late.failed.length) {
+      log(
+        `Hủy TTCN từ log chat thất bại cho ` +
+          `${late.failed.map((item) => item.code).join(", ")}; ` +
+          "sẽ thử lại ở nhịp theo dõi sau."
+      );
+    }
+    return { canceled: late.canceled.length, failed: late.failed };
+  } catch (error) {
+    log(
+      `Không hủy được đơn vị trí xấu từ log chat: ${error.message}; ` +
+        "sẽ thử lại ở nhịp theo dõi sau."
+    );
+    return { canceled: 0, failed: targets };
+  }
+}
+
+async function placeWithRetry(
+  page,
+  rl,
+  selected,
+  stopSignal,
+  ui,
+  ttcnBaselineIds,
+  { scanPlayers = null, onBadPositions = null } = {}
+) {
   let lastError = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     if (stopSignal()) return { stop: true };
@@ -53,7 +193,9 @@ async function placeWithRetry(page, rl, selected, stopSignal, ui, ttcnBaselineId
         placeIconOrders(page, rl, selected, {
           ui,
           isStopRequested: stopSignal,
-          ttcnBaselineIds
+          ttcnBaselineIds,
+          scanPlayers,
+          onBadPositions
         })
       );
     } catch (error) {
@@ -85,11 +227,18 @@ async function stopOrphanIconTasks(page, rl, taskBaseline, selected, ui) {
   return { stopped: [], failed: [], menuUnread: false };
 }
 
-async function cancelBadPositions(page, rl, successes, knownOrderIds, canceled, ui) {
+async function cancelBadPositions(page, rl, successes, knownOrderIds, canceled, ui, tried = null) {
   const cancelTargets = decideCancelTargets(
     successes,
     config.iconBuy.cancelPositionAbove
   );
+  // Đánh dấu đã xử lý để vòng quét log chat không thử hủy lại đúng đơn này
+  // (log vẫn còn trong cửa sổ chat vài chục phút).
+  if (tried instanceof Set) {
+    for (const item of cancelTargets) {
+      tried.add(`${item.code}:${item.position}`);
+    }
+  }
   for (const success of successes) {
     const action = getPositionAction(success, config.iconBuy.cancelPositionAbove);
     if (action === "unknown") {
@@ -103,17 +252,32 @@ async function cancelBadPositions(page, rl, successes, knownOrderIds, canceled, 
         `Giữ đơn ${success.code} vì vị trí ${success.position} ` +
           `<= ${config.iconBuy.cancelPositionAbove}.`
       );
+    } else if (action === "cancel") {
+      // Log rõ vị trí trước khi hủy: trước đây đơn bị hủy mà log chỉ có mã/giá,
+      // không biết vị trí nào vượt ngưỡng (log 08:40:22).
+      log(
+        `Hủy đơn ${success.code} vì vị trí ${success.position} > ` +
+          `${config.iconBuy.cancelPositionAbove}.`
+      );
     }
   }
-  if (!cancelTargets.length) return { canceled, failed: false };
-  const result = await withUi(ui, () =>
-    cancelIconOrders(page, rl, cancelTargets, knownOrderIds)
+  if (!cancelTargets.length) return { canceled, failed: false, failedTargets: [] };
+  const result = await cancelIconOrdersWithRetry(
+    page,
+    rl,
+    cancelTargets,
+    knownOrderIds,
+    ui
   );
   const nextCanceled = canceled + result.canceled.length;
   if (result.failed.length) {
     log(`Hủy TTCN thất bại cho ${result.failed.map((item) => item.code).join(", ")}.`);
   }
-  return { canceled: nextCanceled, failed: result.failed.length > 0 };
+  return {
+    canceled: nextCanceled,
+    failed: result.failed.length > 0,
+    failedTargets: result.failed
+  };
 }
 
 async function monitorExistingOrders(
@@ -124,13 +288,62 @@ async function monitorExistingOrders(
   stopSignal,
   knownOrderIds,
   sessionTtcnBaselineIds,
-  ui
+  ui,
+  {
+    maxWaitMs = Infinity,
+    triedPositions = null,
+    sessionPlayers = null,
+    onBadPositions = null
+  } = {}
 ) {
   const players = selectMonitoredIconTasks(tasks, {
     grade: config.iconBuy.grade,
     quantity: config.iconBuy.quantity
   }).map((task) => ({ code: String(task.code), name: String(task.code) }));
   if (!players.length) return { stopped: false, canceled: 0, failed: false };
+
+  const baselineForCancel = sessionTtcnBaselineIds || knownOrderIds || null;
+  const tried = triedPositions instanceof Set ? triedPositions : new Set();
+  // Quét cả mã đã mua trong phiên dù task đã kết thúc và rời /stop. Bot có thể
+  // gửi "Vị trí mua" rất muộn (đơn 101005099 vị trí 4 lúc 11:03), nếu chỉ quét
+  // task đang chạy thì đơn vị trí xấu bị bỏ sót.
+  const scanMap = new Map(players.map((player) => [player.code, player]));
+  for (const player of sessionPlayers || []) {
+    const code = String(player?.code || player || "");
+    if (code && !scanMap.has(code)) scanMap.set(code, { code, name: code });
+  }
+  const scanPlayers = [...scanMap.values()];
+  // Quét toàn bộ cửa sổ chat mỗi vòng để bắt vị trí xấu ngay khi nó xuất hiện,
+  // không phụ thuộc việc log có rơi đúng lúc đang chờ hay không.
+  const lateTargets = collectLateBadPositions(reader, scanPlayers, tried);
+  let canceled = 0;
+  if (lateTargets.length) {
+    // Log vị trí đọc được từ log chat trước khi hủy, để không còn cảnh
+    // "thấy hủy đơn mà không biết vị trí mấy" (log 08:40:22).
+    const late = await cancelLateBadPositions(
+      page,
+      rl,
+      lateTargets,
+      baselineForCancel,
+      tried,
+      ui
+    );
+    canceled += late.canceled;
+    if (late.canceled) {
+      return { stopped: false, canceled, failed: false, failedTargets: [] };
+    }
+    if (late.failed.length) {
+      // Đưa vào pendingCancels (runner) để thử lại có backoff thay vì mở TTCN
+      // lại mỗi vòng quét.
+      return {
+        stopped: false,
+        canceled,
+        failed: true,
+        failedTargets: late.failed
+      };
+    }
+  }
+
   const baselineIds = await getVisibleMessageIds(page).catch(() => null);
   const result = await waitForPurchaseResults(
     page,
@@ -140,36 +353,89 @@ async function monitorExistingOrders(
     baselineIds,
     {
       isStopRequested: stopSignal,
-      ttcnBaselineIds: sessionTtcnBaselineIds || knownOrderIds,
+      // Không dò TTCN trong chế độ theo dõi: /stop đã xác nhận task đang chạy,
+      // còn vị trí mua chỉ có trong log chat. Tránh mở mini-app định kỳ.
+      ttcnBaselineIds: null,
       ui,
-      rl
+      rl,
+      maxWaitMs,
+      // Nhịp theo dõi đã có heartbeat 5 phút/lần; không lặp thêm dòng
+      // "chưa thấy log" mỗi cửa sổ 15 phút.
+      quietTimeout: true,
+      // Chỉ theo dõi task có sẵn: không coi E006/prompt/giới hạn của bot là
+      // lỗi của đơn vừa gửi (trước đây làm dừng cả luồng ICON).
+      monitorOnly: true,
+      // Trong lúc chờ 15 phút vẫn quét vị trí xấu của mọi đơn trong phiên.
+      scanPlayers,
+      onBadPositions
     }
   );
-  if (result.stopped) return { stopped: true, canceled: 0, failed: false };
-  const handled = await cancelBadPositions(
-    page,
-    rl,
-    result.successes,
-    knownOrderIds,
-    0,
-    ui
-  );
-  return { stopped: false, canceled: handled.canceled, failed: handled.failed };
+  if (result.stopped) return { stopped: true, canceled, failed: false, failedTargets: [] };
+  let handled = { canceled: 0, failed: false, failedTargets: [] };
+  try {
+    handled = await cancelBadPositions(
+      page,
+      rl,
+      result.successes,
+      baselineForCancel,
+      0,
+      ui,
+      tried
+    );
+  } catch (error) {
+    // Không để lỗi mở TTCN biến thành promise treo/không rõ trạng thái.
+    log(`Không hủy được đơn vị trí xấu: ${error.message}`);
+    return {
+      stopped: false,
+      canceled,
+      failed: true,
+      failedTargets: decideCancelTargets(
+        result.successes,
+        config.iconBuy.cancelPositionAbove
+      )
+    };
+  }
+  return {
+    stopped: false,
+    canceled: canceled + handled.canceled,
+    failed: handled.failed,
+    failedTargets: handled.failedTargets || []
+  };
+}
+
+// Tải lại trang Telegram khi cửa sổ chat không còn bubble. Lỗi reload không
+// được làm chết luồng: caller sẽ chờ backoff rồi đọc lại.
+async function reloadTelegramForRecovery(page, ui) {
+  try {
+    log("Cửa sổ chat không còn nội dung; tải lại trang Telegram để khôi phục chat bot.");
+    await withUi(ui, () => hardReloadTelegram(page));
+    return true;
+  } catch (error) {
+    log(`Không tải lại được trang Telegram: ${error.message}`);
+    return false;
+  }
 }
 
 async function captureStopBaselineWithRetry(page, rl, stopSignal, ui) {
   const maxAttempts = 3;
+  let reloaded = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (stopSignal()) return null;
     const baseline = await withUi(ui, () => captureStopTaskBaseline(page, rl));
     if (baseline) return baseline;
-    if (attempt < maxAttempts) {
-      log(
-        `Chưa đọc được menu /stop (lần ${attempt}/${maxAttempts}); ` +
-          "có thể luồng mua/nâng đang ghi chat, sẽ thử lại."
-      );
-      await page.waitForTimeout(2_000);
+    if (attempt >= maxAttempts) break;
+    log(
+      `Chưa đọc được menu /stop (lần ${attempt}/${maxAttempts}); ` +
+        "có thể luồng mua/nâng đang ghi chat, sẽ thử lại."
+    );
+    // Không còn bubble nào = Telegram đã đóng cột chat/kẹt màn hình "Chats".
+    // page.goto cùng hash không dựng lại UI, phải reload cứng một lần.
+    const visibleIds = await getVisibleMessageIds(page).catch(() => null);
+    if (!visibleIds && !reloaded) {
+      reloaded = true;
+      if (await reloadTelegramForRecovery(page, ui)) continue;
     }
+    await page.waitForTimeout(2_000);
   }
   return null;
 }
@@ -193,10 +459,36 @@ async function runIconBuy(page, rl, {
   let sessionTtcnBaselineIds = null;
   let sessionTaskBaseline = null;
   const sessionPlayers = new Map();
+  // Mỗi cặp mã:vị trí chỉ thử hủy một lần trong phiên, tránh mở TTCN lặp lại
+  // khi bot vẫn chưa trả menu.
+  const monitorTriedPositions = new Set();
+  // Đơn vị trí xấu đã xác định nhưng TTCN chưa hủy được. Giữ cả orderId để lần
+  // sau hủy đúng card dù card đó đã nằm trong baseline TTCN của phiên (nếu
+  // không, baseline sẽ loại trừ và đơn xấu không bao giờ được hủy).
+  const pendingCancels = new Map();
+  let pendingCancelBackoffMs = CANCEL_RETRY_DELAY_MS;
+  // Mốc sớm nhất được thử hủy lại đơn treo (không chặn mua bù slot).
+  let nextPendingCancelAt = 0;
+  // Khi bot không trả menu /stop (đang bận xử lý đơn), giãn nhịp đọc lại thay
+  // vì gửi /stop mỗi 15s.
+  let stopReadBackoffMs = config.iconBuy.slotPollSeconds * 1_000;
+  let stopReadFailures = 0;
 
   // Khi phiên kết thúc (kể cả lỗi), chỉ dừng các task do chính phiên này tạo.
   // Task có trong baseline đầu tiên không bao giờ bị đụng.
   const finish = async (result) => {
+    if (pendingCancels.size) {
+      log(
+        `Kết thúc phiên còn ${pendingCancels.size} đơn vị trí xấu chưa hủy được (` +
+          [...pendingCancels.values()]
+            .map(
+              (item) =>
+                `${item.code}${item.orderId ? ` orderId ${item.orderId}` : ""}`
+            )
+            .join(", ") +
+          "); cần kiểm tra TTCN thủ công."
+      );
+    }
     if (!sessionPlayers.size || !sessionTaskBaseline) return result;
     const stopped = await stopOrphanIconTasks(
       page,
@@ -211,10 +503,137 @@ async function runIconBuy(page, rl, {
     return result;
   };
 
+  // Khi bot gửi "Vị trí mua" muộn cho một đơn cũ (không còn trong /stop), hàm
+  // này hủy ngay qua TTCN bằng baseline đầu phiên. Dùng chung
+  // monitorTriedPositions để mỗi mã:vị trí chỉ mở TTCN một lần.
+  const handleStrayBadPositions = async (found) => {
+    const targets = [];
+    for (const item of found || []) {
+      const position = Number(item?.position);
+      if (!Number.isFinite(position)) continue;
+      const key = `${item.code}:${position}`;
+      if (monitorTriedPositions.has(key)) continue;
+      monitorTriedPositions.add(key);
+      targets.push({
+        code: String(item.code),
+        grade: config.iconBuy.grade,
+        quantity: config.iconBuy.quantity,
+        total: config.iconBuy.quantity,
+        position,
+        positionError: null
+      });
+    }
+    if (!targets.length) return { canceled: 0, failed: [] };
+    const late = await cancelLateBadPositions(
+      page,
+      rl,
+      targets,
+      sessionTtcnBaselineIds || knownOrderIds,
+      monitorTriedPositions,
+      ui
+    );
+    canceled += late.canceled;
+    for (const item of late.failed || []) {
+      pendingCancels.set(pendingCancelKey(item), item);
+    }
+    if (late.failed?.length && !nextPendingCancelAt) {
+      nextPendingCancelAt = Date.now() + pendingCancelBackoffMs;
+    }
+    return late;
+  };
+
+  // Quét chủ động ở đầu vòng: bắt đơn vị trí xấu đến trong lúc agent đang đọc
+  // /stop hoặc tra cứu, kể cả khi chưa vào cửa sổ theo dõi.
+  const scanStrayBadPositions = async () => {
+    if (!sessionPlayers.size) return 0;
+    const targets = collectLateBadPositions(
+      reader,
+      [...sessionPlayers.values()],
+      monitorTriedPositions
+    );
+    if (!targets.length) return 0;
+    const late = await cancelLateBadPositions(
+      page,
+      rl,
+      targets,
+      sessionTtcnBaselineIds || knownOrderIds,
+      monitorTriedPositions,
+      ui
+    );
+    canceled += late.canceled;
+    for (const item of late.failed || []) {
+      pendingCancels.set(pendingCancelKey(item), item);
+    }
+    if (late.failed?.length && !nextPendingCancelAt) {
+      nextPendingCancelAt = Date.now() + pendingCancelBackoffMs;
+    }
+    return late.canceled;
+  };
+
   while (true) {
     if (stopSignal()) {
       log("Nhận lệnh dừng; dừng luồng ICON, giữ nguyên worker Auto Mua/Auto Nâng.");
       return finish({ action: "stop", batches, purchased, canceled });
+    }
+
+    // Hủy đơn vị trí xấu vừa được bot báo muộn trước khi đọc /stop, để số slot
+    // đọc được đã tính cả slot vừa trống.
+    await scanStrayBadPositions();
+
+    // Còn đơn vị trí xấu chưa hủy được: thử lại theo nhịp giãn dần nhưng KHÔNG
+    // chặn việc mua bù slot. Trước đây khối này nằm sau bước đọc /stop và luôn
+    // `continue`, nên khi bot không trả /tn agent đứng im vô hạn.
+    if (pendingCancels.size && Date.now() >= nextPendingCancelAt) {
+      const pendingTargets = [...pendingCancels.values()];
+      // Dùng baseline đầu phiên để đơn đặt trong phiên không bị loại trừ (baseline
+      // từng lượt có thể đã chứa chính đơn xấu cần hủy).
+      const pendingBaseline = sessionTtcnBaselineIds || knownOrderIds;
+      let retryResult = null;
+      if (!pendingBaseline && pendingTargets.some((item) => !item.orderId)) {
+        log(
+          "Chưa có baseline TTCN khi hủy lại đơn treo; sẽ chọn card cuối khớp " +
+            "mã/grade, cần kiểm tra lại TTCN nếu có nhiều đơn cũ cùng cầu thủ."
+        );
+      }
+      try {
+        retryResult = await cancelIconOrdersWithRetry(
+          page,
+          rl,
+          pendingTargets,
+          pendingBaseline,
+          ui
+        );
+      } catch (error) {
+        log(`Chưa hủy lại được đơn vị trí xấu: ${error.message}`);
+      }
+      if (retryResult) {
+        for (const item of [...retryResult.canceled, ...retryResult.notFound]) {
+          pendingCancels.delete(pendingCancelKey(item));
+        }
+        canceled += retryResult.canceled.length;
+        if (retryResult.canceled.length) {
+          log(
+            `Đã hủy ${retryResult.canceled.length} đơn vị trí xấu còn treo; ` +
+              "quay lại đọc /stop để mua bù slot."
+          );
+        }
+      }
+      if (!pendingCancels.size) {
+        pendingCancelBackoffMs = CANCEL_RETRY_DELAY_MS;
+        nextPendingCancelAt = 0;
+      } else {
+        log(
+          `Vẫn chưa hủy được ${pendingTargets.map((item) => item.code).join(", ")}; ` +
+            `vẫn tiếp tục mua bù slot và thử lại sau ${Math.ceil(
+              pendingCancelBackoffMs / 1_000
+            )}s.`
+        );
+        nextPendingCancelAt = Date.now() + pendingCancelBackoffMs;
+        pendingCancelBackoffMs = Math.min(
+          pendingCancelBackoffMs * 2,
+          CANCEL_PENDING_MAX_BACKOFF_MS
+        );
+      }
     }
 
     // Đọc /stop mỗi vòng để biết slot MUA đang dùng. E003 / "không có lệnh nào
@@ -229,13 +648,26 @@ async function runIconBuy(page, rl, {
       return finish({ action: "stop", batches, purchased, canceled });
     }
     if (!taskBaseline) {
+      stopReadFailures += 1;
+      if (stopReadFailures >= STOP_READ_MAX_FAILURES) {
+        const error = new Error(
+          `Không đọc được menu /stop sau ${stopReadFailures} lần liên tiếp ` +
+            "(chat Telegram có thể bị đóng/kẹt); cần mở lại phiên Telegram."
+        );
+        error.code = "TELEGRAM_CHAT_UNREADABLE";
+        throw error;
+      }
       log(
         "Chưa đọc được baseline menu /stop sau nhiều lần thử; " +
-          "giữ nguyên phiên ICON và chờ nhịp tiếp theo, không đặt thêm task."
+          `giữ nguyên phiên ICON và chờ ${Math.ceil(stopReadBackoffMs / 1_000)}s ` +
+          "rồi thử lại, không đặt thêm task."
       );
-      await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
+      await page.waitForTimeout(stopReadBackoffMs);
+      stopReadBackoffMs = Math.min(stopReadBackoffMs * 2, 300_000);
       continue;
     }
+    stopReadFailures = 0;
+    stopReadBackoffMs = config.iconBuy.slotPollSeconds * 1_000;
     if (!sessionTaskBaseline) sessionTaskBaseline = taskBaseline;
 
     const runningTaskList = taskBaseline.tasks || taskBaseline;
@@ -280,13 +712,37 @@ async function runIconBuy(page, rl, {
           stopSignal,
           knownOrderIds,
           sessionTtcnBaselineIds,
-          ui
+          ui,
+          {
+            maxWaitMs:
+              config.iconBuy.monitorWaitSeconds > 0
+                ? config.iconBuy.monitorWaitSeconds * 1_000
+                : Infinity,
+            triedPositions: monitorTriedPositions,
+            // Quét cả đơn của các lượt trước dù task đã kết thúc.
+            sessionPlayers: [...sessionPlayers.values()],
+            onBadPositions: handleStrayBadPositions
+          }
         );
         canceled += monitored.canceled;
         if (monitored.stopped) {
           return finish({ action: "stop", batches, purchased, canceled });
         }
         if (monitored.failed) {
+          // Không kết thúc phiên chỉ vì TTCN đang bận: ghi nhận đơn xấu vào
+          // danh sách chờ hủy và thử lại ở nhịp sau, tránh bỏ rơi đơn vị trí
+          // xấu (trước đây phiên kết thúc và baseline mới loại trừ luôn đơn).
+          for (const item of monitored.failedTargets || []) {
+            pendingCancels.set(pendingCancelKey(item), item);
+          }
+          if (pendingCancels.size) {
+            log(
+              `Chưa hủy được đơn vị trí xấu (TTCN bận); ghi nhận ` +
+                `${pendingCancels.size} đơn để thử lại, vẫn tiếp tục mua bù slot.`
+            );
+            await page.waitForTimeout(CANCEL_RETRY_DELAY_MS);
+            continue;
+          }
           return finish({
             action: "error",
             batches,
@@ -322,6 +778,11 @@ async function runIconBuy(page, rl, {
         .map((task) => String(task.code || ""))
         .filter(Boolean)
     );
+    // Không mua lại mã đang có đơn vị trí xấu chờ hủy: tránh chồng thêm đơn
+    // cho cùng cầu thủ trong lúc TTCN chưa hủy được.
+    for (const item of pendingCancels.values()) {
+      if (item?.code) activeCodes.add(String(item.code));
+    }
     const batchLimit = Math.min(
       availableTaskSlots,
       config.iconBuy.maxPlayersPerBatch
@@ -360,7 +821,15 @@ async function runIconBuy(page, rl, {
       return finish({ action: "exhausted", batches, purchased, canceled });
     }
 
-    selected.forEach((player) => sessionPlayers.set(player.code, player));
+    selected.forEach((player) => {
+      const code = String(player.code);
+      sessionPlayers.set(code, player);
+      // Mua lại cùng mã sau khi đơn cũ bị hủy: xóa dấu vị trí cũ để vị trí xấu
+      // của đơn mới (dù trùng số) vẫn được hủy.
+      for (const key of monitorTriedPositions) {
+        if (key.startsWith(`${code}:`)) monitorTriedPositions.delete(key);
+      }
+    });
     log(
       `Lượt ICON ${batches + 1}: mua ${selected
         .map((player) => `${player.code} ${player.name}`)
@@ -371,13 +840,24 @@ async function runIconBuy(page, rl, {
 
     let result;
     try {
+      // Quét đơn của các lượt trước trong lúc chờ lượt này: bot có thể báo vị
+      // trí của đơn cũ muộn (101005099 vị trí 4 lúc 11:03 khi đang chờ
+      // 101048940). Đơn của lượt hiện tại do waitForPurchaseResults xử lý.
+      const currentCodes = new Set(selected.map((player) => String(player.code)));
+      const strayScanPlayers = [...sessionPlayers.values()].filter(
+        (player) => !currentCodes.has(String(player.code))
+      );
       result = await placeWithRetry(
         page,
         rl,
         selected,
         stopSignal,
         ui,
-        knownOrderIds
+        knownOrderIds,
+        {
+          scanPlayers: strayScanPlayers,
+          onBadPositions: handleStrayBadPositions
+        }
       );
     } catch (error) {
       // Lỗi sau khi đã gửi lệnh: giữ nguyên task; chỉ đơn có vị trí xác nhận
@@ -390,6 +870,17 @@ async function runIconBuy(page, rl, {
 
     if (result.stop) {
       return finish({ action: "stop", batches, purchased, canceled });
+    }
+    if (result.rateLimited) {
+      // Bot từ chối vì thao tác nhanh: KHÔNG gửi lại ngay (có thể tạo đơn
+      // trùng). Đọc lại /stop để xem task có được tạo không rồi mới quyết định.
+      batches += 1;
+      log(
+        "Bot giới hạn thao tác nhanh; giữ nguyên task và đọc lại /stop " +
+          "trước khi thử lại, không gửi mua dồn."
+      );
+      await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
+      continue;
     }
     if (result.stopped) {
       // /stopagent đến trong lúc chờ log mua: dừng task mới rồi kết thúc.
@@ -417,6 +908,33 @@ async function runIconBuy(page, rl, {
       log("Nhận lệnh dừng nhưng đã có đơn ICON; xử lý vị trí rồi kết thúc phiên.");
     }
     batches += 1;
+
+    // Watchdog mềm: chưa có log sau purchaseSoftTimeoutSeconds. Không coi là
+    // lỗi và không hủy task; xử lý vị trí xấu đã biết rồi quay lại đọc /stop.
+    if (result.timedOut) {
+      if (result.successes.length) {
+        try {
+          const handled = await cancelBadPositions(
+            page,
+            rl,
+            result.successes,
+            knownOrderIds,
+            canceled,
+            ui,
+            monitorTriedPositions
+          );
+          canceled = handled.canceled;
+        } catch (error) {
+          log(`Không hủy được đơn vị trí xấu sau watchdog: ${error.message}`);
+        }
+      }
+      log(
+        "Hết thời gian chờ log đặt mua ICON; giữ nguyên task và quay lại " +
+          "kiểm tra /stop thay vì chờ tiếp."
+      );
+      await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
+      continue;
+    }
 
     if (!result.successes.length) {
       const missing = result.missing.length ? result.missing : selected;
@@ -508,6 +1026,10 @@ async function runIconBuy(page, rl, {
       result.successes,
       config.iconBuy.cancelPositionAbove
     );
+    // Đánh dấu đã xử lý để vòng quét log chat không hủy lại cùng mã:vị trí.
+    for (const item of cancelTargets) {
+      monitorTriedPositions.add(`${item.code}:${item.position}`);
+    }
     for (const success of result.successes) {
       const action = getPositionAction(success, config.iconBuy.cancelPositionAbove);
       if (action === "cancel") continue;
@@ -533,8 +1055,12 @@ async function runIconBuy(page, rl, {
         );
       }
       try {
-        const cancelResult = await withUi(ui, () =>
-          cancelIconOrders(page, rl, cancelTargets, knownOrderIds)
+        const cancelResult = await cancelIconOrdersWithRetry(
+          page,
+          rl,
+          cancelTargets,
+          knownOrderIds,
+          ui
         );
         canceled += cancelResult.canceled.length;
         if (cancelResult.failed.length || cancelResult.notFound.length) {
@@ -551,17 +1077,24 @@ async function runIconBuy(page, rl, {
           );
         }
         if (cancelResult.failed.length) {
-          // Đã có đơn đặt ở vị trí xấu mà không hủy được: dừng mua tiếp để
-          // tránh tích thêm đơn ngoài ý muốn, chờ người dùng kiểm tra TTCN.
-          // Không dùng /stop để dừng task; chỉ hủy đúng đơn có vị trí xấu.
+          // Đã có đơn đặt ở vị trí xấu mà không hủy được: ghi nhận để thử lại
+          // (giữ orderId để không bị baseline TTCN loại trừ) và tạm dừng mua
+          // thêm, tránh tích thêm đơn ngoài ý muốn.
+          for (const item of cancelResult.failed) {
+            pendingCancels.set(pendingCancelKey(item), item);
+          }
+          log(
+            `Chưa hủy được ${cancelResult.failed.length} đơn vị trí xấu; ` +
+              "giữ nguyên đơn, thử hủy lại ở nhịp sau và vẫn mua bù slot."
+          );
           await stopOrphanIconTasks(page, rl, taskBaseline, selected, ui);
-          return finish({
-            action: "error",
-            batches,
-            purchased,
-            canceled,
-            reason: "ttcn-cancel-failed"
-          });
+          await page.waitForTimeout(CANCEL_RETRY_DELAY_MS);
+          nextPendingCancelAt = Date.now() + CANCEL_RETRY_DELAY_MS;
+          pendingCancelBackoffMs = Math.min(
+            CANCEL_RETRY_DELAY_MS * 2,
+            CANCEL_PENDING_MAX_BACKOFF_MS
+          );
+          continue;
         }
 
         // Đơn đã hủy nhả slot: dừng đúng task của các mã vừa hủy để vòng sau
@@ -583,17 +1116,19 @@ async function runIconBuy(page, rl, {
           });
         }
       } catch (error) {
-        // Hủy lỗi không được làm mất trạng thái các đơn đã mua; chỉ log và
-        // dừng phiên để người dùng kiểm tra TTCN, không tự mua tiếp.
+        // Không kết thúc phiên chỉ vì chưa mở được TTCN: đơn xấu vẫn cần hủy
+        // nên ghi nhận vào danh sách chờ và thử lại ở nhịp sau.
         log(`Không hủy được đơn TTCN: ${error.message}`);
+        for (const item of cancelTargets) {
+          pendingCancels.set(pendingCancelKey(item), item);
+        }
         await stopOrphanIconTasks(page, rl, taskBaseline, selected, ui);
-        return finish({
-          action: "error",
-          batches,
-          purchased,
-          canceled,
-          reason: "ttcn-cancel-failed"
-        });
+        await page.waitForTimeout(CANCEL_RETRY_DELAY_MS);
+        pendingCancelBackoffMs = Math.min(
+          CANCEL_RETRY_DELAY_MS * 2,
+          CANCEL_PENDING_MAX_BACKOFF_MS
+        );
+        continue;
       }
     }
 

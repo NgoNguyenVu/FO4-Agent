@@ -9,6 +9,7 @@ const {
   parsePurchaseSuccesses,
   filterIconPurchaseSuccesses,
   mergePurchaseSuccesses,
+  findLatestKnownPositions,
   getLatestBotError,
   isOrderLimitError,
   parseRetryAfterSeconds,
@@ -150,6 +151,21 @@ test("later purchase log for the same code replaces the older one but keeps a kn
   );
 });
 
+test("historical purchase logs provide positions when TTCN cards have none", () => {
+  const players = [{ code: "101001201" }, { code: "101001202" }];
+  const text = [
+    "Đã đặt mua thành công 101001201 | 1 | 44,300,000 | 1/1 lúc 2026-11-07 10:00:00.000. Vị trí mua: 11",
+    "Đã đặt mua thành công 101001202 | 1 | 44,300,000 | 1/1 lúc 2026-11-07 10:00:01.000. Vị trí mua: 6",
+    "Đã đặt mua thành công 101001202 | 1 | 44,300,000 | 1/1 lúc 2026-11-07 10:00:02.000. Vị trí mua: 2",
+    "Đã đặt mua thành công 101001201 | 1 | 44,300,000 | 1/3 lúc 2026-11-07 10:00:03.000. Vị trí mua: 9"
+  ].join("\n");
+  const positions = findLatestKnownPositions(text, players, 1, 1);
+  assert.equal(positions.get("101001201"), 11);
+  // Log 1/1 mới nhất thắng; log 1/3 của Auto Mua không được dùng.
+  assert.equal(positions.get("101001202"), 2);
+  assert.equal(findLatestKnownPositions("", players, 1, 1).size, 0);
+});
+
 test("bot error and rate-limit helpers read the latest values", () => {
   assert.match(getLatestBotError("E002: Token không hợp lệ\nE006: hệ thống bận"), /^E006/);
   assert.equal(getLatestBotError("không có mã lỗi"), null);
@@ -207,6 +223,12 @@ test("TTCN order selection skips baseline, sell and receive orders", () => {
   assert.equal(selectOrderToCancel(orders, success, new Set(["old", "new"])), null);
   assert.equal(
     selectOrderToCancel(orders, { ...success, orderId: "old" }, new Set()).orderId,
+    "old"
+  );
+  // orderId đã xác định chính xác từ lần hủy trước: baseline không được loại
+  // trừ, nếu không đơn xấu sẽ không bao giờ hủy được ở baseline/phiên sau.
+  assert.equal(
+    selectOrderToCancel(orders, { ...success, orderId: "old" }, new Set(["old"])).orderId,
     "old"
   );
   assert.equal(

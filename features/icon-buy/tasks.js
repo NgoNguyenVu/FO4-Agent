@@ -13,6 +13,7 @@ const {
   messagesToText
 } = require("./chat-messages");
 const { sendSingleLineMessage } = require("./menu");
+const { ensureMessageComposer } = require("../composer");
 const { log } = require("../agent-log");
 
 const TASK_BUTTON_RE =
@@ -117,8 +118,19 @@ async function readButtonsInMessages(page, messages) {
 async function readStopMenu(page, rl) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
+  // Mở lại chat bot TRƯỚC khi chụp mốc. Trước đây lấy baseline id trước nên khi
+  // Telegram kẹt ở màn hình "Chats" (không còn bubble), hàm trả null ngay mà
+  // không hề gửi /stop và lặp lại hàng giờ (log 01:48-03:43). ensureMessageComposer
+  // sẽ mở lại chat và có nhánh tải lại cứng trang nếu cần.
+  await ensureMessageComposer(page, rl);
   const baselineIds = await getVisibleMessageIds(page).catch(() => null);
-  if (!baselineIds) return null;
+  if (!baselineIds) {
+    log(
+      "Không đọc được nội dung chat (chat bot chưa mở hoặc trang chưa render); " +
+        "bỏ qua lần đọc /stop này, không gửi lệnh."
+    );
+    return null;
+  }
 
   await sendSingleLineMessage(page, rl, "/stop");
   log(`Đã gửi /stop để chụp baseline task; chờ menu trong ${config.iconBuy.menuTimeoutSeconds}s.`);

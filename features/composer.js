@@ -9,7 +9,8 @@ const {
 const {
   BOT_URL,
   ensureBotChatOpen,
-  dismissTelegramTips
+  dismissTelegramTips,
+  hardReloadTelegram
 } = require("./telegram-io");
 const {
   promptWakeable,
@@ -71,10 +72,18 @@ async function ensureMessageComposer(page, rl) {
   // lần; reload lần hai làm mini-app timeout oan (bug 2026-10-19). (goto/page-op
   // throw khi context đã đóng bởi /resetagent -> để caller xử lý recovery.)
   if (!composer) {
-    log("Không thấy ô nhập tin nhắn; tải lại chat bot một lần và chờ thêm...");
+    log("Không thấy ô nhập tin nhắn; tải lại trang Telegram một lần và chờ thêm...");
     await page.goto(BOT_URL, { waitUntil: "domcontentloaded" });
     await dismissTelegramTips(page);
-    composer = await waitForMessageComposer(page, 30_000);
+    composer = await waitForMessageComposer(page, 15_000);
+    if (!composer) {
+      // page.goto(BOT_URL) khi URL chỉ khác hash là điều hướng same-document:
+      // Telegram Web K có thể vẫn kẹt ở màn hình "Chats" (log 01:48-03:43).
+      // reload() mới tạo document mới và mở lại chat theo hash.
+      log("Vẫn không thấy ô nhập sau khi điều hướng; tải lại cứng trang Telegram.");
+      await hardReloadTelegram(page);
+      composer = await waitForMessageComposer(page, 30_000);
+    }
   }
   if (!composer) {
     setWaitingForLoginPrompt(true);
@@ -85,7 +94,11 @@ async function ensureMessageComposer(page, rl) {
     }
     await page.goto(BOT_URL, { waitUntil: "domcontentloaded" });
     await dismissTelegramTips(page);
-    composer = await waitForMessageComposer(page, 60_000);
+    composer = await waitForMessageComposer(page, 30_000);
+    if (!composer) {
+      await hardReloadTelegram(page);
+      composer = await waitForMessageComposer(page, 30_000);
+    }
   }
   if (!composer) {
     throw new Error("Không tìm thấy ô nhập tin nhắn Telegram sau khi mở chat; agent chưa gửi lệnh.");
