@@ -2,6 +2,7 @@
 // Trước đây validateConfig trong autobuy.js phải lazy-require autonangcap,
 // tạo phụ thuộc chéo giữa hai feature.
 const rawConfig = require("../config.json");
+const { validateSpendLimits } = require("../lib/spend-guard");
 
 const config = {
   ...rawConfig,
@@ -23,6 +24,28 @@ const config = {
     targetCheckDelaySeconds: 60,
     targetCheckIntervalSeconds: 120,
     ...(rawConfig.upgrade || {})
+  },
+  // Giới hạn chi tiêu (TASK-003 Stage A). Mặc định TẮT và cap = 0 (fail closed):
+  // module lib/spend-guard.js đã sẵn sàng nhưng chưa nối vào buy/icon/upgrade,
+  // nên hành vi giao dịch hiện tại không đổi. Bật enforcement cần Owner Decision.
+  spendLimits: {
+    enabled: false,
+    perRunBP: 0,
+    perDayBP: 0,
+    perWeekBP: 0,
+    perFeatureBP: {
+      buy: 0,
+      upgrade: 0,
+      icon: 0
+    },
+    ...(rawConfig.spendLimits || {})
+  },
+  liveTrading: {
+    enabled: false,
+    requireConfirmation: true,
+    dryRunDefault: true,
+    allowedProfiles: [],
+    ...(rawConfig.liveTrading || {})
   },
   // Process lock + worker registry (TASK-005). State ghi ngoài repo ở
   // <LOCALAPPDATA>/FO4PurchaseAgent/state/; đường dẫn do agent.js quyết định.
@@ -193,11 +216,35 @@ function validateWorkerConfig() {
   }
 }
 
+function validateLiveTradingConfig() {
+  const live = config.liveTrading || {};
+  for (const key of ["enabled", "requireConfirmation", "dryRunDefault"]) {
+    if (typeof live[key] !== "boolean") {
+      throw new Error(`Cấu hình liveTrading.${key} phải là true/false.`);
+    }
+  }
+  if (!Array.isArray(live.allowedProfiles)) {
+    throw new Error("Cấu hình liveTrading.allowedProfiles phải là mảng.");
+  }
+  for (const profile of live.allowedProfiles) {
+    if (typeof profile !== "string" || !profile.trim()) {
+      throw new Error("liveTrading.allowedProfiles chỉ chứa chuỗi không rỗng.");
+    }
+  }
+  if (live.dryRunDefault !== true) {
+    throw new Error(
+      "liveTrading.dryRunDefault phải là true: agent chỉ chạy live khi có cờ --live và env rõ ràng."
+    );
+  }
+}
+
 function validateConfig() {
   validateBuyConfig();
   validateUpgradeConfig();
   validateIconBuyConfig();
   validateWorkerConfig();
+  validateSpendLimits(config.spendLimits);
+  validateLiveTradingConfig();
 }
 
 module.exports = {
@@ -207,5 +254,6 @@ module.exports = {
   validateUpgradeConfig,
   validateIconBuyConfig,
   validateWorkerConfig,
+  validateLiveTradingConfig,
   validateConfig
 };

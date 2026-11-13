@@ -6,7 +6,7 @@
 - **Risk:** High
 - **Effort:** M
 - **Dependency:** TASK-007; Stage B phụ thuộc TASK-002
-- **Status:** Todo
+- **Status:** **DONE (Stage A)** — 2026-11-13, branch `ai/auto-cycle-v1`; Reviewer APPROVED + QA PASS; Quality Gate A (90/100). Xem [completed/TASK-003-financial-hard-caps.md](../completed/TASK-003-financial-hard-caps.md). Stage B (nối runtime + bật cap) cần Owner Decision.
 - **Owner đề xuất:** Financial integrity + Platform
 
 ## 1. Mục tiêu
