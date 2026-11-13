@@ -336,7 +336,7 @@ test("fresh upgrade outcome reports system errors and summaries only", () => {
   assert.equal(getUpgradeOutcomeFromFresh(null, "anything"), null);
 });
 
-test("a new terminal is detected from the full snapshot when fresh text is unavailable", () => {
+test("a new terminal is detected from the full snapshot when fresh text is unavailable", async () => {
   const baselineText =
     "Đã khởi động Auto Nâng Cấp (thủ công).\n" +
     "Nâng thành công 0/1 target.\nMức thẻ cuối 5\nDừng do hết nguyên liệu.";
@@ -354,7 +354,7 @@ test("a new terminal is detected from the full snapshot when fresh text is unava
     reachedTarget: true
   });
 
-  test("counts successive upgrade summaries even when bot start notices are absent", () => {
+  await test("counts successive upgrade summaries even when bot start notices are absent", () => {
     const oldResult =
       "Kết quả nâng cấp:\n-Nâng thành công 0/1 target.\n" +
       "Cầu thủ ID old: Mức thẻ cuối 5\nDừng do hết nguyên liệu.";
@@ -365,7 +365,7 @@ test("a new terminal is detected from the full snapshot when fresh text is unava
     assert.equal(countUpgradeTerminals(`${oldResult}\n${newResult}`), 2);
   });
 
-  test("does not treat an old orphan terminal as the current upgrade result", () => {
+  await test("does not treat an old orphan terminal as the current upgrade result", () => {
     const oldResult =
       "Kết quả nâng cấp:\n-Nâng thành công 1/1 target.\n" +
       "Cầu thủ ID old: Mức thẻ cuối 6\nDừng do đạt mục tiêu.";
@@ -729,7 +729,7 @@ test("parses the insufficient-materials warning for the loop", () => {
   assert.equal(parseUpgradeShortage("Mua thành công! SPID: 1"), null);
 });
 
-test("carries possible percentage into a terminal shortage result", () => {
+test("carries possible percentage into a terminal shortage result", async () => {
   const chat =
     "Kết quả nâng cấp:\n" +
     "- Nâng thành công 0/1 target.\n" +
@@ -748,7 +748,7 @@ test("carries possible percentage into a terminal shortage result", () => {
     reachedTarget: false
   });
 
-  test("marks zero remaining materials as phase exhaustion", () => {
+  await test("marks zero remaining materials as phase exhaustion", () => {
     const chat =
       "Kết quả nâng cấp:\n" +
       "- Nâng thành công 0/1 target.\n" +
