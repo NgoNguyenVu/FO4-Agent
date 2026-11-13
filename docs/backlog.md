@@ -1,5 +1,16 @@
 # Backlog CTO — FO4-Agent
 
+- **Cập nhật:** 2026-11-13 (cycle v1 — Stage A cho TASK-004/005/003; xem `docs/completed/CYCLE-2026-11-13.md`)
+- **Thay đổi cycle 2026-11-13:**
+  - `TASK-004` P0 Reliability → **DONE Stage A** (`3b864e7`): lifecycle, signal handling, heartbeat, cleanup idempotent.
+  - `TASK-005` P0 Concurrency → **DONE Stage A** (`7fee795`): process lock + worker registry/lease + config `worker`.
+  - `TASK-003` P0 Financial → **DONE Stage A** (`767323f`): spend guard + config `spendLimits`/`liveTrading`, **chưa enforcement**.
+- **Follow-up mới (đề xuất):**
+  - `TASK-040` (P0, cần Owner): TASK-003 Stage B — đặt cap thật + nối guard vào buy/icon/upgrade + reconcile reservation.
+  - `TASK-041` (P0): TASK-005 Stage B — controller dùng registry làm source of truth; đăng ký worker cho 3 feature.
+  - `TASK-042` (P1): TASK-004 Stage B — integration test SIGINT/SIGTERM thật + README runbook/exit code/heartbeat.
+  - `TASK-043` (P1): test spawn 2 process thật cho process lock; test race acquire/heartbeat.
+
 - **Cập nhật:** 2026-11-04 (TASK-032 evidence — B1–B9 closed; TASK-001 REMEDIATION_COMPLETE, chờ re-review + QA; TASK-007 AUTHORIZATION_REQUIRED)
 - **Người lập:** CTO Agent; cập nhật bởi Manager Agent
 - **Nguồn dữ liệu:** Cortex MCP (`cortex_cypher`, `cortex_code_grep`, `cortex_code_context`, `cortex_code_impact`, `cortex_detect_changes`) và working tree.

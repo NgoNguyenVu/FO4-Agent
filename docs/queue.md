@@ -1,31 +1,56 @@
 # Current Queue
 
-- **Cập nhật:** 2026-11-05
-- **Sprint:** Security Remediation — TASK-001
-- **Company Status:** **IN_PROGRESS — TASK-001** (B1–B9 đã đóng; **TASK-007 DONE**; **TASK-035 DONE**; còn TASK-039 + TASK-001 re-review + QA)
-- **Active Task:** `TASK-039` — **TODO**, đã đủ điều kiện mở sau khi `TASK-007` DONE (`9542347`)
-- **Current Focus:** TASK-039 Review + QA trên diff ICON mới; song song TASK-001 re-review + QA.
-- **Repo:** local `main` = `9542347`; remote `main` = `9542347` (đã đồng bộ `0 0`); history sạch artifact; CI đã có history gate blocking.
-- **Freeze:** Không còn freeze chung. Commit chỉ khi task = `COMMIT_AUTHORIZED`; **không merge, release hoặc chạy live**.
-- **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed).
-- **Residual risk:** `npm run check` tại `9542347` = **198/198**. TASK-007 **DONE** (config regression đã sửa bằng `9542347`). F1/F2 → **TASK-035 DONE**. Còn mở: Review/QA TASK-039 và TASK-001 re-review, cùng quyết định tài chính `maxPriceBP 888888` / `purchaseTimeoutSeconds 0` (TASK-003).
+- **Cập nhật:** 2026-11-13 (Autonomous Project Audit & Continuous Improvement Cycle v1)
+- **Branch làm việc:** `ai/auto-cycle-v1` — **không đụng `main`**
+- **Sprint:** Reliability + Financial integrity (Stage A)
+- **Company Status:** **IN_PROGRESS** — 3 task P0 hoàn thành trong cycle này (TASK-004, TASK-005, TASK-003 Stage A), đều Reviewer APPROVED + QA PASS + Quality Gate ≥ B
+- **Active Task:** _(không có — cycle đóng 3 task; task tiếp theo xem §1)_
+- **Current Focus:** Review các Stage B cần Owner Decision (spend cap enforcement), TASK-039, TASK-001 re-review
+- **Repo:** branch `ai/auto-cycle-v1`; `main` giữ nguyên `75bea29`. Không merge, không push trong cycle này.
+- **Freeze:** Không merge/release/live. Commit chỉ trên nhánh cycle.
+- **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed, lịch sử cũ).
+- **Residual risk:** `npm run check` = **267/267** trên nhánh cycle. TASK-003 mới ở Stage A (chưa enforcement) — cần Owner Decision trước khi bật cap.
 
-## 1. Ready — executable
+## 0. Cycle 2026-11-13 — kết quả
+
+| Task | Nội dung | Trạng thái | Quality Gate | Record |
+|---|---|---|---|---|
+| `TASK-004` | Graceful shutdown + lifecycle + heartbeat | **DONE (Stage A)** | B (83/100) | [`completed/TASK-004`](completed/TASK-004-graceful-shutdown.md) · [`review`](reviews/TASK-004-review-2026-11-13.md) · [`qa`](reviews/TASK-004-qa-2026-11-13.md) |
+| `TASK-005` | Process lock + worker registry/lease | **DONE (Stage A)** | B (84/100) | [`completed/TASK-005`](completed/TASK-005-worker-state-lock.md) · [`review`](reviews/TASK-005-review-2026-11-13.md) · [`qa`](reviews/TASK-005-qa-2026-11-13.md) |
+| `TASK-003` | Spend guard + spend limit config | **DONE (Stage A)** | A (90/100) | [`completed/TASK-003`](completed/TASK-003-financial-hard-caps.md) · [`review`](reviews/TASK-003-review-2026-11-13.md) · [`qa`](reviews/TASK-003-qa-2026-11-13.md) |
+
+Tổng kết cycle: [`docs/completed/CYCLE-2026-11-13.md`](completed/CYCLE-2026-11-13.md).
+
+## 1. Ready — executable (ngoài cycle này)
 
 | Task | Priority | Bước kế tiếp |
 |---|---|---|
-| `TASK-039` — ICON continuous-buy + inventory gate | P0 | **Review + QA** trên diff ICON trong working tree (14 file runtime + 4 test + README). TASK-007 đã chốt baseline `config.json` (`9542347`). |
-| `TASK-001` — Security cleanup | P0 | **Reviewer re-review + QA pass**; đóng khi `npm run check` xanh trên `9542347` (đã 198/198). |
+| `TASK-003 Stage B` | P0 | Nối guard vào buy/icon/upgrade + đặt cap thật; **cần Owner Decision** (tham số tài chính) |
+| `TASK-005 Stage B` | P0 | Controller dùng `registry.reconcile()` làm source of truth; đăng ký worker buy/upgrade/icon |
+| `TASK-004 Stage B` | P1 | Integration test SIGINT/SIGTERM thật + README runbook |
+| `TASK-039` — ICON continuous-buy + inventory gate | P0 | Review/QA phần code đã có trên `main`; cần authorization cho tham số tài chính trước khi commit |
+| `TASK-001` — Security cleanup | P0 | Reviewer re-review + QA pass; baseline `main` hiện 267/267 trên nhánh cycle |
 
 ## 2. Authorization required
 
-_(không có task nào chờ Owner Decision)_
+| Task | Lý do |
+|---|---|
+| `TASK-003 Stage B` | Thay đổi hành vi tài chính live (hard cap + live gate) |
+| `TASK-039` commit | Tham số `maxPriceBP`/`minRatio` vượt giá trị đã duyệt nếu chưa có Owner Decision |
 
 ## 3. Blocked
 
 _(không có task bị block)_
 
-## 4. Done — 2026-11-04
+## 4. Done — 2026-11-13 (cycle v1)
+
+| Task | Kết quả | Record |
+|---|---|---|
+| `TASK-004` — Graceful shutdown (Stage A) | **DONE** — commit `3b864e7`; 8 test lifecycle; QA PASS; Gate B | [`completed/TASK-004`](completed/TASK-004-graceful-shutdown.md) |
+| `TASK-005` — Process lock + worker registry (Stage A) | **DONE** — commit `7fee795`; 10 test registry; QA PASS; Gate B | [`completed/TASK-005`](completed/TASK-005-worker-state-lock.md) |
+| `TASK-003` — Spend guard (Stage A) | **DONE** — commit `767323f`; 13 test guard; QA PASS; Gate A | [`completed/TASK-003`](completed/TASK-003-financial-hard-caps.md) |
+
+## 4b. Done — 2026-11-04 (trước cycle)
 
 | Task | Kết quả | Record |
 |---|---|---|
@@ -71,8 +96,8 @@ _(không có task bị block)_
 
 ## 7. STOP CONDITION
 
-**STOP CONDITION: NO** — `TASK-007` đã DONE và remote đồng bộ, nhưng `TASK-039` chưa Review/QA và `TASK-001` chưa re-review.
+**STOP CONDITION: NO** — cycle v1 đã đóng 3 task P0 (Stage A), nhưng vẫn còn việc khả thi:
 
-- `TASK-039` đã đủ điều kiện mở; cần Reviewer + QA trên diff ICON trước khi `READY_FOR_COMMIT`.
-- `TASK-001` cần Reviewer re-review + QA pass trước khi DONE.
-- Quyết định tài chính `maxPriceBP 888888` / `purchaseTimeoutSeconds 0` vẫn chờ Owner (TASK-003).
+- **Có thể làm ngay (không cần Owner):** TASK-004 Stage B (integration test), TASK-005 Stage B (controller dùng registry), TASK-001 re-review trên nhánh cycle.
+- **Chờ Owner Decision:** TASK-003 Stage B (bật hard cap/live gate) và TASK-039 commit (tham số tài chính).
+- Không merge/push `main`; toàn bộ thay đổi nằm trên `ai/auto-cycle-v1`.

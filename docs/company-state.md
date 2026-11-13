@@ -1,24 +1,33 @@
 # Company State
 
-- **Cập nhật:** 2026-11-05
+- **Cập nhật:** 2026-11-13 (Autonomous Project Audit & Continuous Improvement Cycle v1)
 - **Người cập nhật:** Manager Agent (Engineering Director)
-- **Current Sprint:** Security Remediation — TASK-001
-- **Company Delivery Status:** **IN_PROGRESS — TASK-001** (B1–B9 đã đóng; **TASK-007 DONE**; **TASK-035 DONE**; còn TASK-039 + TASK-001 re-review + QA)
-- **Active Cycle Status:** **TASK-007 DONE** — Reviewer v2 APPROVED, QA PASS 198/198, commit `9542347` đã push
-- **Current Task:** `TASK-039` — ICON refactor (**TODO**, đã đủ điều kiện mở); song song TASK-001 re-review + QA (SCHEDULED).
-- **Task Status:** **TODO**
-- **Reviewer:** **APPROVED** — TASK-027 (2026-11-01), TASK-033 (2026-11-01), TASK-030 (2026-11-04), **TASK-007 v2** (2026-11-05)
-- **QA:** **PASS** — TASK-027 (2026-11-01), TASK-033 (13/13), TASK-030 (21/21, 2026-11-04), **TASK-007 (198/198, 2026-11-05)**
-- **Parallel Security Task:** TASK-025 — **ACCEPTED RISK APPROVED** (no active production credential; no rotation required)
-- **Blocked Task:** _(không còn)_ — TASK-001 đã đủ điều kiện re-review
-- **Authorization Required:** _(không còn)_ — `TASK-007` đã đóng bằng `9542347`
-- **TASK-007 Review Verdict:** **APPROVED** (vòng 2, 2026-11-05) — vòng 1 REJECTED `IN_SCOPE_FIX` vì config regression trong `7f9291b`; xem `docs/reviews/TASK-007-review-2026-11-05.md`; QA **PASS** 198/198 (`TASK-007-qa-2026-11-05.md`).
-- **TASK-001 Review Verdict:** REJECTED (2026-10-31) — chưa re-review
-- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (không còn freeze chung)
-- **Push Allowed:** Chỉ trong phạm vi task đã được authorization
+- **Current Sprint:** Reliability + Financial integrity — Stage A
+- **Branch:** `ai/auto-cycle-v1` (chưa merge/push; `main` giữ `75bea29`)
+- **Company Delivery Status:** **3 task P0 DONE (Stage A)** — TASK-004 (graceful shutdown), TASK-005 (process lock + registry), TASK-003 (spend guard). Reviewer APPROVED + QA PASS, Quality Gate B/B/A.
+- **Active Cycle Status:** **CYCLE v1 COMPLETE** — `npm run check` **267/267**; 3 commit riêng trên nhánh cycle.
+- **Current Task:** _(không có)_ — task khả thi tiếp theo: TASK-005 Stage B, TASK-004 Stage B, TASK-001 re-review; chờ Owner: TASK-003 Stage B, TASK-039 commit.
+- **Task Status:** **DONE (Stage A)**
+- **Reviewer:** **APPROVED** — TASK-004, TASK-005, TASK-003 (2026-11-13)
+- **QA:** **PASS** — TASK-004 (244/244), TASK-005 (254/254), TASK-003 (267/267) — 2026-11-13
+- **Parallel Security Task:** TASK-025 — **ACCEPTED RISK APPROVED** (không có credential production)
+- **Blocked Task:** _(không còn)_
+- **Authorization Required:** TASK-003 Stage B (bật hard cap/live gate); TASK-039 commit (tham số tài chính)
+- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (cycle này đã commit trên nhánh riêng)
+- **Push Allowed:** NO (cycle này không push)
 - **Merge Allowed:** NO
 - **Live Run Allowed:** NO
-- **Security Risk Acceptance:** TASK-025 — **APPROVED** (Accepted Risk); TASK-026 — **APPROVED** (Force push authorized và đã thực thi).
+- **Security Risk Acceptance:** TASK-025 — **APPROVED**; TASK-026 — **APPROVED** (force push lịch sử cũ).
+
+## 0. Cycle 2026-11-13 — tóm tắt
+
+| Task | Deliverable | Commit | Gate |
+|---|---|---|---|
+| `TASK-004` | `lib/lifecycle.js` + wire `agent.js`/`controller.js`; heartbeat; signal + cleanup idempotent | `3b864e7` | B (83) |
+| `TASK-005` | `lib/worker-registry.js` + process lock/heartbeat; config `worker` | `7fee795` | B (84) |
+| `TASK-003` | `lib/spend-guard.js` + config `spendLimits`/`liveTrading` (chưa enforcement) | `767323f` | A (90) |
+
+Chi tiết: [`docs/completed/CYCLE-2026-11-13.md`](completed/CYCLE-2026-11-13.md).
 
 ## 1. Kết quả thực thi — 2026-11-02
 
