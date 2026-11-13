@@ -7,7 +7,7 @@
 - **Effort:** L
 - **Dependency:** TASK-002, TASK-007
 - **Related:** TASK-017
-- **Status:** **DONE (Stage A)** — 2026-11-13, branch `ai/auto-cycle-v1`; Reviewer APPROVED + QA PASS; Quality Gate B (84/100). Xem [completed/TASK-005-worker-state-lock.md](../completed/TASK-005-worker-state-lock.md). Stage B (controller dùng registry làm source of truth) chuyển backlog.
+- **Status:** **DONE (Stage A + Stage B)** — Stage A 2026-11-13 (`7fee795`); Stage B 2026-11-13 trên `ai/auto-cycle-v2` — controller dùng registry làm source of truth. Reviewer APPROVED + QA PASS; Gate B (84/100 Stage A, 82/100 Stage B). Xem [completed/TASK-005-worker-state-lock.md](../completed/TASK-005-worker-state-lock.md) và [completed/TASK-005B-controller-registry-integration.md](../completed/TASK-005B-controller-registry-integration.md).
 - **Owner đề xuất:** Platform / Concurrency
 
 ## 1. Mục tiêu

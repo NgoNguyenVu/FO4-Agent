@@ -1,25 +1,32 @@
 # Company State
 
-- **Cập nhật:** 2026-11-13 (Autonomous Project Audit & Continuous Improvement Cycle v1)
+- **Cập nhật:** 2026-11-13 (Autonomous Project Audit & Continuous Improvement Cycle v2)
 - **Người cập nhật:** Manager Agent (Engineering Director)
-- **Current Sprint:** Reliability + Financial integrity — Stage A
-- **Branch:** `ai/auto-cycle-v1` (chưa merge/push; `main` giữ `75bea29`)
-- **Company Delivery Status:** **3 task P0 DONE (Stage A)** — TASK-004 (graceful shutdown), TASK-005 (process lock + registry), TASK-003 (spend guard). Reviewer APPROVED + QA PASS, Quality Gate B/B/A.
-- **Active Cycle Status:** **CYCLE v1 COMPLETE** — `npm run check` **267/267**; 3 commit riêng trên nhánh cycle.
-- **Current Task:** _(không có)_ — task khả thi tiếp theo: TASK-005 Stage B, TASK-004 Stage B, TASK-001 re-review; chờ Owner: TASK-003 Stage B, TASK-039 commit.
-- **Task Status:** **DONE (Stage A)**
-- **Reviewer:** **APPROVED** — TASK-004, TASK-005, TASK-003 (2026-11-13)
+- **Current Sprint:** Reliability + Concurrency — Stage B
+- **Branch:** `ai/auto-cycle-v2` (tách từ `main` `4cf7fb8`; push nhánh phụ để tạo PR, không đụng `main`)
+- **Company Delivery Status:** **IN_PROGRESS — Cycle v2** — TASK-005B (controller dùng registry) và TASK-004B (integration signal + runbook).
+- **Active Cycle Status:** **CYCLE v2 RUNNING** — baseline `npm test` **267/267**.
+- **Current Task:** `TASK-005B` — **IN_PROGRESS**; kế tiếp `TASK-004B`.
+- **Task Status:** **IN_PROGRESS**
+- **Reviewer:** **APPROVED** — TASK-004, TASK-005, TASK-003 (2026-11-13, cycle v1)
 - **QA:** **PASS** — TASK-004 (244/244), TASK-005 (254/254), TASK-003 (267/267) — 2026-11-13
 - **Parallel Security Task:** TASK-025 — **ACCEPTED RISK APPROVED** (không có credential production)
 - **Blocked Task:** _(không còn)_
 - **Authorization Required:** TASK-003 Stage B (bật hard cap/live gate); TASK-039 commit (tham số tài chính)
-- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (cycle này đã commit trên nhánh riêng)
-- **Push Allowed:** NO (cycle này không push)
+- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v2`)
+- **Push Allowed:** Chỉ nhánh `ai/*` (phục vụ PR); **không push `main`**
 - **Merge Allowed:** NO
 - **Live Run Allowed:** NO
 - **Security Risk Acceptance:** TASK-025 — **APPROVED**; TASK-026 — **APPROVED** (force push lịch sử cũ).
 
-## 0. Cycle 2026-11-13 — tóm tắt
+## 0b. Cycle 2026-11-13 v2 — Stage B
+
+| Task | Deliverable | Trạng thái |
+|---|---|---|
+| `TASK-005B` | Shared registry + `lib/worker-session.js`; controller reconcile/đăng ký worker buy–upgrade–icon | IN_PROGRESS |
+| `TASK-004B` | Integration test process-level SIGINT/SIGTERM + README runbook | TODO |
+
+## 0. Cycle 2026-11-13 v1 — tóm tắt
 
 | Task | Deliverable | Commit | Gate |
 |---|---|---|---|

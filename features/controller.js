@@ -39,6 +39,8 @@ const { config, validateConfig } = require("./config");
 const { log, logError } = require("./agent-log");
 const { createUiLock } = require("../lib/ui-lock");
 const { getLifecycle } = require("../lib/lifecycle");
+const { getWorkerRegistry } = require("../lib/worker-registry");
+const { createWorkerSession } = require("../lib/worker-session");
 const {
   promptWakeable,
   wakePendingPrompt,
@@ -127,6 +129,10 @@ async function main() {
   const ui = createUiLock();
   let iconStopRequested = false;
   let iconMonitor = null;
+  // TASK-005 Stage B: registry là nguồn sự thật về worker đang chạy.
+  const registry = getWorkerRegistry();
+  const workerSession = createWorkerSession({ registry, log, logError });
+  let iconBeginBlocked = false;
 
   const stopIconMonitor = async (reason) => {
     iconStopRequested = true;
@@ -142,6 +148,18 @@ async function main() {
 
   const ensureIconMonitor = () => {
     if (iconMonitor) return;
+    // ICON là worker nền: được chạy song song với buy/upgrade nhưng không được
+    // trùng feature và bị chặn nếu registry đang có worker unknown.
+    const started = workerSession.tryBegin("icon", {
+      concurrencyGroup: "background",
+      quiet: iconBeginBlocked
+    });
+    if (!started) {
+      iconBeginBlocked = true;
+      return;
+    }
+    iconBeginBlocked = false;
+    workerSession.markRunning("icon");
     iconStopRequested = false;
     iconMonitor = runIconBuy(page, rl, {
       ui,
@@ -169,6 +187,9 @@ async function main() {
         return null;
       })
       .finally(() => {
+        workerSession.stop("icon", {
+          reason: iconStopRequested ? "stop-requested" : "completed"
+        });
         iconMonitor = null;
       });
   };
@@ -215,6 +236,11 @@ async function main() {
       } catch {
         // readline đã đóng.
       }
+      // Nhả mọi worker còn ghi trong registry để lần khởi động sau reconcile
+      // không thấy "running" giả.
+      for (const active of workerSession.listActive()) {
+        workerSession.stop(active.feature, { reason: "shutdown" });
+      }
     }
   });
   const rememberBuyCompletion = (outcome, source) => {
@@ -258,13 +284,30 @@ async function main() {
       // lần chạy lại vẫn kiểm tra kho trước, không nhảy thẳng vào mua phôi.
       inventoryKnownAvailable = false;
       nextInventoryCheckAt = 0;
-      const pivot = await pivotMasterToUpgrade(
-        page,
-        rl,
-        async (...args) => runSingleUpgrade(...args),
-        log,
-        ui
-      );
+      const upgradeBegin = workerSession.tryBegin("upgrade");
+      if (!upgradeBegin) {
+        log("Registry đang chặn worker nâng cấp; agent về idle.");
+        agentActive = false;
+        return false;
+      }
+      workerSession.markRunning("upgrade");
+      let pivot;
+      try {
+        pivot = await pivotMasterToUpgrade(
+          page,
+          rl,
+          async (...args) => runSingleUpgrade(...args),
+          log,
+          ui
+        );
+      } catch (error) {
+        workerSession.stop("upgrade", {
+          unknown: true,
+          reason: error.code || "pivot-error"
+        });
+        throw error;
+      }
+      workerSession.stop("upgrade", { reason: "pivot" });
       miniAppServerDownBackoffSeconds = 60;
       agentActive = pivot.agentActive;
       if (pivot.mode && pivot.mode !== "icon") mode = pivot.mode;
@@ -341,6 +384,30 @@ async function main() {
   let reader = chatTextReaders.get(page);
   reader.arm();
   await waitForTextToSettle(reader, 1_500, 30_000, page);
+  // TASK-005B: reconcile worker state trước khi nhận lệnh. Chat chỉ là bằng
+  // chứng, registry là nguồn sự thật. Worker ICON còn sót sau restart được
+  // đóng (process cũ đã chết); buy/upgrade chỉ adopt khi chat xác nhận.
+  let startupBuyEvidence = false;
+  if (getLatestAutoBuyStatus(reader.snapshot().text) === "running") {
+    const tail = await verifyTailOrphan(page, reader).catch(() => reader.snapshot());
+    startupBuyEvidence = getLatestAutoBuyStatus(tail.text) === "running";
+  }
+  const reconciled = workerSession.reconcileOnStartup({
+    hasWorkerEvidence: startupBuyEvidence
+  });
+  if (reconciled.action === "block") {
+    if (reconciled.reason === "evidence-without-registry") {
+      log(
+        "Chat còn dấu hiệu worker mua nhưng registry trống; " +
+          "agent sẽ xác minh bằng /stop trước khi bấm chu kỳ mới."
+      );
+    } else {
+      log(
+        `Registry worker đang chặn khởi động (${reconciled.reason}); ` +
+          "agent chỉ chờ lệnh, không tự bấm mua/nâng."
+      );
+    }
+  }
   log("Agent READY");
   log(
     "Đang chờ /startagent (mua ICON → nhận → mua phôi → nâng), " +
@@ -349,13 +416,33 @@ async function main() {
 
   while (true) {
     if (getLifecycle().isStopping()) break;
-    getLifecycle().updateHeartbeat({ mode, agentActive });
+    getLifecycle().updateHeartbeat({
+      mode,
+      agentActive,
+      activeWorkerId: workerSession.activeWorkerIds().join(",") || null
+    });
     const enteredActive = agentActive;
     try {
       if (sessionUnavailable) {
         // Khôi phục Telegram Web trên page mới; chờ tối đa 45s rồi tiếp tục.
         ({ context, page, reader } = await restoreTelegramSession(context, page, rl, handleControlCommand));
         sessionUnavailable = false;
+        // Trong cùng process, KHÔNG coi worker ICON là stale — chỉ reconcile
+        // buy/upgrade để adopt worker bot còn chạy thật.
+        const restored = workerSession.reconcileOnStartup({
+          hasWorkerEvidence:
+            getLatestAutoBuyStatus(reader.snapshot().text) === "running",
+          staleFeatures: []
+        });
+        if (
+          restored.action === "block" &&
+          restored.reason !== "evidence-without-registry"
+        ) {
+          log(
+            `Registry chặn sau khi khôi phục phiên (${restored.reason}); ` +
+              "không mở chu kỳ mới cho tới khi worker được xử lý."
+          );
+        }
       }
 
       // --- IDLE: chờ lệnh ---
@@ -395,6 +482,21 @@ async function main() {
           continue;
         }
         if (command === "startagent") {
+          const startReconcile = workerSession.reconcileOnStartup({
+            hasWorkerEvidence:
+              getLatestAutoBuyStatus(reader.snapshot().text) === "running",
+            // Trong cùng process, ICON đang chạy không phải worker stale.
+            staleFeatures: []
+          });
+          if (
+            startReconcile.action === "block" &&
+            startReconcile.reason !== "evidence-without-registry"
+          ) {
+            log(
+              `Registry vẫn đang chặn (${startReconcile.reason}); ` +
+                "không bấm mua mới. Xem runbook để xử lý worker unknown."
+            );
+          }
           mode = "master";
           initialWorkerCheckDone = false;
           inventoryKnownAvailable = false;
@@ -433,7 +535,24 @@ async function main() {
           );
           continue;
         }
-        const up = await runSingleUpgrade(page, rl, upgradeBlockedTargetIds, ui);
+        const upgradeBegin = workerSession.tryBegin("upgrade");
+        if (!upgradeBegin) {
+          agentActive = false;
+          log("Registry đang chặn worker nâng cấp; agent về idle, không mở nâng.");
+          continue;
+        }
+        workerSession.markRunning("upgrade");
+        let up;
+        try {
+          up = await runSingleUpgrade(page, rl, upgradeBlockedTargetIds, ui);
+        } catch (error) {
+          workerSession.stop("upgrade", {
+            unknown: true,
+            reason: error.code || "upgrade-error"
+          });
+          throw error;
+        }
+        workerSession.stop("upgrade", { reason: up.action || "upgrade" });
         if (up.action === "continue" || up.action === "blocked-target") {
           miniAppRecoveryAttempts = 0;
           menuBackoffSeconds = config.menuBusyRetrySeconds;
@@ -613,11 +732,35 @@ async function main() {
         };
         cycleBaselineBeforeStart = getCycleBaseline(body);
         cycleStartedAt = Date.now();
-        await withTimeout(startButton.click(), 60_000, "bấm Bắt đầu Auto Mua");
+        // TASK-005B: đăng ký worker TRƯỚC khi bấm, để registry là nguồn sự
+        // thật. Nếu registry đang chặn (worker khác/unknown) thì không bấm.
+        const buyBegin = workerSession.tryBegin("buy", {
+          cycleId: `buy-${cycleStartedAt}`
+        });
+        if (!buyBegin) {
+          agentActive = false;
+          log("Registry đang có worker khác; agent về idle, không bấm Bắt đầu.");
+          continue;
+        }
+        try {
+          await withTimeout(startButton.click(), 60_000, "bấm Bắt đầu Auto Mua");
+        } catch (error) {
+          workerSession.stop("buy", { reason: "start-click-failed" });
+          throw error;
+        }
       } finally {
         ui.release();
       }
-      await waitForStartAcknowledgement(page, startAckBaseline, rl, { ui });
+      try {
+        await waitForStartAcknowledgement(page, startAckBaseline, rl, { ui });
+        workerSession.markRunning("buy");
+      } catch (error) {
+        workerSession.stop("buy", {
+          unknown: error.code === "START_ACK_UNVERIFIED",
+          reason: error.code || "start-ack"
+        });
+        throw error;
+      }
       startAckRetries = 0;
       const acknowledgedCycleText = reader.snapshot().text;
       const cycleBaseline = {
@@ -676,6 +819,7 @@ async function main() {
           );
         }
       }
+      workerSession.stop("buy", { reason: "completed" });
       rememberBuyCompletion(outcome, "agent-worker");
       const openNext = await handleBuyOutcome(
         outcome,
@@ -684,6 +828,34 @@ async function main() {
       if (!openNext) continue;
       // completed -> lặp lại: về đầu vòng ACTIVE để /stop kiểm tra lại rồi mở chu kỳ kế tiếp.
     } catch (error) {
+      // TASK-005B: lỗi xảy ra khi worker đang ghi trong registry → phải đóng
+      // worker. Lỗi recoverable đã biết coi như đã dừng; lỗi còn lại → unknown
+      // vì không chắc bot đã dừng (fail-closed, chặn mua chồng).
+      // /resetagent chỉ khôi phục phiên: KHÔNG đóng worker để lần reconcile sau
+      // còn adopt được worker đang chạy thật trên bot.
+      if (!remoteResetRequested) {
+        const recoverableWorkerErrors = new Set([
+          "MENU_BUSY",
+          "START_ACK_TIMEOUT",
+          "MINI_APP_SERVER_DOWN",
+          "MINI_APP_BLANK",
+          "MINI_APP_UI_NOT_READY",
+          "MINI_APP_NOT_OPENED",
+          "MINI_APP_LOAD_TIMEOUT",
+          "UPGRADE_MODE_LOAD_TIMEOUT",
+          "BOT_SYSTEM_ERROR",
+          "TELEGRAM_NAVIGATED",
+          "TELEGRAM_CHAT_UNREADABLE"
+        ]);
+        const recoverable = recoverableWorkerErrors.has(error.code);
+        for (const feature of ["buy", "upgrade"]) {
+          if (!workerSession.isRegistered(feature)) continue;
+          workerSession.stop(feature, {
+            unknown: !recoverable,
+            reason: error.code || "agent-error"
+          });
+        }
+      }
       if (error.code === "MENU_BUSY") {
         const backoffSeconds = menuBackoffSeconds;
         nextMenuAttemptAt = Date.now() + backoffSeconds * 1_000;
