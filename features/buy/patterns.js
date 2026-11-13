@@ -10,6 +10,7 @@ const {
   INVENTORY_RECEIVED_RE,
   STOP_MENU_RE,
   AUTO_BUY_STOP_OPTION_RE,
+  WORKER_TOKEN_STOP_RE,
   COMPLETED_RE,
   RECENT_CHAT_TEXT_LENGTH,
   MINI_APP_BP_LOAD_RETRIES,
@@ -21,7 +22,7 @@ const {
   lastPatternIndex,
   getFreshSince
 } = require("../../lib/text-utils");
-const { countBotSystemErrors } = require("../../lib/bot-signals");
+const { countBotSystemErrors, stripBotSystemErrors } = require("../../lib/bot-signals");
 
 // Một chu kỳ mua 14 cầu thủ không thể xong sau vài giây. Tin hoàn tất xuất
 // hiện quá sớm thường là tin cũ của chu kỳ trước bị Telegram/observer phát lại;
@@ -98,15 +99,31 @@ function getLatestCompletionAfterActivity(text) {
 }
 
 // Kết quả chu kỳ suy từ phần tin mới (ưu tiên), dùng trong waitForCycleCompletion.
-function getCycleOutcomeFromFresh(freshText, fullText) {
+// `ignoreSystemErrors` dùng khi E006 được quy cho luồng ICON (cùng chat): bỏ đoạn
+// E006 đó nhưng vẫn nhận các tín hiệu khác trong cùng cửa sổ (đặc biệt là
+// completion "Hết thời gian treo. Hoàn thành mua N cầu thủ").
+function getCycleOutcomeFromFresh(
+  freshText,
+  fullText,
+  { ignoreSystemErrors = false } = {}
+) {
   if (!freshText) return null;
-  if (countBotSystemErrors(freshText) > 0) return { status: "system-error" };
-  if (countMatches(freshText, FULL_INVENTORY_STOP_RE) > 0) {
+  const effectiveFresh = ignoreSystemErrors
+    ? stripBotSystemErrors(freshText)
+    : freshText;
+  // Worker Auto Mua Phôi dừng vì không làm mới được token: terminal rõ ràng của
+  // chu kỳ, không thể nhầm với E006 do luồng ICON. Phải nhận cả khi
+  // `ignoreSystemErrors` đang bật.
+  if (countMatches(effectiveFresh, WORKER_TOKEN_STOP_RE) > 0) {
+    return { status: "system-error", reason: "worker-token-stop" };
+  }
+  if (countBotSystemErrors(effectiveFresh) > 0) return { status: "system-error" };
+  if (countMatches(effectiveFresh, FULL_INVENTORY_STOP_RE) > 0) {
     if (lastPatternIndex(fullText, FULL_INVENTORY_STOP_RE) > lastActiveIndex(fullText)) {
       return { status: "inventory-full" };
     }
   }
-  if (countMatches(freshText, AUTO_BUY_STOPPED_RE) > 0) {
+  if (countMatches(effectiveFresh, AUTO_BUY_STOPPED_RE) > 0) {
     const stopIdx = lastPatternIndex(fullText, AUTO_BUY_STOPPED_RE);
     if (
       stopIdx > lastActiveIndex(fullText) &&
@@ -115,7 +132,7 @@ function getCycleOutcomeFromFresh(freshText, fullText) {
       return { status: "purchase-stopped" };
     }
   }
-  if (countMatches(freshText, COMPLETED_RE) > 0) {
+  if (countMatches(effectiveFresh, COMPLETED_RE) > 0) {
     const completed = getLatestCompletionAfterActivity(fullText);
     if (completed !== null) return { status: "completed", playersBought: completed };
   }
@@ -194,6 +211,12 @@ function isStopConfirmed(snapshotText, freshText, stopBaseline) {
 // Trả về thông điệp để log, hoặc null nếu chu kỳ hoàn tất (caller tự xử lý tiếp).
 function idleOutcomeMessage(outcome) {
   if (outcome.status === "system-error") {
+    if (outcome.reason === "worker-token-stop") {
+      return (
+        "Bot không làm mới được token; worker Auto Mua Phôi đã tự dừng. " +
+        "Agent dừng và chờ /startagent."
+      );
+    }
     return "Bot trả E006; agent đã tự dừng và chờ /startagent.";
   }
   if (outcome.status === "inventory-full") {
@@ -465,6 +488,7 @@ function getCycleBaseline(text) {
     stopped: countStoppedNotices(text),
     autoBuyStopped: countAutoBuyStoppedNotices(text),
     inventoryFullStops: countFullInventoryStops(text),
+    workerTokenStops: countMatches(text, WORKER_TOKEN_STOP_RE),
     systemErrors: countBotSystemErrors(text),
     noRunning: [...text.matchAll(STOP_NO_RUNNING_RE)].length,
     inventoryReceived: [...text.matchAll(INVENTORY_RECEIVED_RE)].length
@@ -507,6 +531,11 @@ function hasFreshFeatureMenu(baselineText, currentText) {
   return Boolean(fresh && hasRecentFeatureMenu(fresh));
 }
 
+// Worker Auto Mua Phôi vừa dừng vì token (terminal thật của chu kỳ).
+function hasNewWorkerTokenStop(text, previousCount) {
+  return countMatches(text, WORKER_TOKEN_STOP_RE) > previousCount;
+}
+
 module.exports = {
   STALE_COMPLETION_GUARD_MS,
   isEarlyCompletion,
@@ -545,5 +574,6 @@ module.exports = {
   getExistingAutoBuyCycle,
   hasRecentFeatureMenu,
   getFeatureMenuAction,
-  hasFreshFeatureMenu
+  hasFreshFeatureMenu,
+  hasNewWorkerTokenStop
 };

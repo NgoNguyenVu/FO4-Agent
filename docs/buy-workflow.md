@@ -1,4 +1,4 @@
-# Buy Workflow — Auto Mua Phôi
+﻿# Buy Workflow — Auto Mua Phôi
 
 > Grounded in `features/buy/*`, `features/controller.js`, `lib/bot-patterns.js`, and `lib/text-utils.js` at commit `8c1b38b`. UI strings are exact matches from the code.
 
@@ -21,14 +21,15 @@ The background ICON runner may run at the same time; all Telegram UI actions are
 Before a buy cycle is opened, the controller (`features/controller.js`) does the following:
 
 - Ensures the ICON monitor is running (`ensureIconMonitor()`).
-- If inventory availability is unknown, opens the **upgrade** mini-app once through `checkInventoryIcons(page, rl)`:
-  - `count > 0` → inventory is known to contain ICON; proceed.
-  - `count === 0` → wait `iconBuy.inventoryCheckIntervalSeconds` (default 1800 s) before checking again.
+- If inventory availability is unknown, opens the **upgrade** mini-app once through `checkInventoryIcons(page, rl)`, which returns an inventory summary instead of a raw count:
+  - At least one ICON below `upgrade.targetGrade` and not locked (`eligible > 0`) → inventory is usable; proceed with buy phôi.
+  - No ICON at all (`total === 0`) → wait `iconBuy.inventoryCheckIntervalSeconds` (default 1800 s) before checking again.
+  - ICONs exist but all have reached the target grade (or are locked) → **do not buy phôi**; keep the agent alive and wait for a new ICON, then check again.
   - A new "Đã nhận … cầu thủ trong kho mua" chat receipt forces an immediate re-check.
   - `INVENTORY_READ_UNCONFIRMED` is transient: log and retry next interval; do not kill the agent.
 - Only then does it request the Auto Mua Phôi menu and start a cycle.
 
-This gate prevents the mini-app from being opened every few seconds when the inventory is empty.
+This gate prevents the mini-app from being opened every few seconds when the inventory is empty, and prevents a buy/upgrade loop when the only ICON is already `+targetGrade` (the bot would report inventory full, no new receipt would arrive, and the agent would stop after 5 minutes).
 
 ## 3. End-to-end sequence
 
@@ -247,12 +248,13 @@ After acceptance:
 
 Code: `features/buy/cycle.js#waitForCycleCompletion`, `features/buy/patterns.js`.
 
-Maximum wait: `maxCycleWaitMinutes` (180 min).
+Maximum wait: `maxCycleWaitMinutes` (240 min; the bot's hold can reach ~180 min, so the cap must be above it).
 
 ### Terminal signals, in priority order
 
 1. `/stopagent` command → `{ status: "stop-requested" }`
 2. Fresh-text outcome (`getCycleOutcomeFromFresh`):
+   - new worker token-refresh stop (`Worker dừng do không thể làm mới token sau N lần thử`) → `system-error`, even while ICON-attributed E006s are being ignored
    - new E006 → `system-error`
    - new inventory-full stop newer than the latest activity → `inventory-full`
    - new auto-buy stop newer than the latest activity/completion → `purchase-stopped`
@@ -269,7 +271,7 @@ Bare "Đã dừng N luồng thành công" is deliberately **not** used as an orp
 
 The ICON flow shares the same Telegram chat as Auto Mua Phôi. When ICON sends `/tn`, clicks a feature button, or sends a purchase list, the bot can answer that request with E006. `lib/icon-activity.js` records the time of those actions; a new E006 is ignored by the buy waiter when it arrives within `ICON_E006_ATTRIBUTION_MS` (120 s) of an ICON action. The ignored error is logged, the error baseline advances, and the waiter keeps looking for real cycle signals. A completion arriving in the same window — including `Hết thời gian treo. Hoàn thành mua N cầu thủ` — is still accepted, so a finished cycle is not lost.
 
-Without recent ICON activity, E006 keeps its old meaning: the buy cycle ends as `system-error` and the agent goes idle until `/startagent`.
+Without recent ICON activity, E006 keeps its old meaning: the buy cycle ends as `system-error` and the agent goes idle until `/startagent`. The explicit `Worker dừng do không thể làm mới token sau N lần thử` message is always terminal, regardless of recent ICON activity.
 
 ### Chat patterns used
 
@@ -284,6 +286,7 @@ Without recent ICON activity, E006 keeps its old meaning: the buy cycle ends as 
 | Auto-buy option present | `Mua phôi |` |
 | No running task | `Hiện không có lệnh nào đang chạy` / `Không có worker nào đang chạy cho tài khoản này` |
 | E006 | `E006: Lỗi hệ thống, vui lòng thử lại sau hoặc liên hệ hỗ trợ` |
+| Worker token stop | `Worker dừng do không thể làm mới token sau N lần thử` |
 | Rate limit | `Bạn thao tác quá nhanh … Vui lòng chờ N s rồi thử lại` |
 | Purchase event | `Mua thành công!` |
 
@@ -362,7 +365,7 @@ stateDiagram-v2
   Waiting --> Stopped: auto-buy stopped
   Waiting --> SystemError: E006
   Waiting --> StopRequested: /stopagent
-  Waiting --> Timeout: 180 min
+  Waiting --> Timeout: 240 min
   Completed --> Completed: next buy cycle
   InventoryFull --> Pivot: receipt + master mode
   InventoryFull --> Completed: receipt + non-master
@@ -381,7 +384,7 @@ stateDiagram-v2
 | `maxPriceBP` | 777777 | Max price written to the BP field |
 | `quantityPerAttempt` | 3 | Players per purchase attempt (validator allows ≤5) |
 | `maxPerCycle` | 14 | Players per buy cycle / mini-app 4th field |
-| `maxCycleWaitMinutes` | 180 | Hard cap on waiting for a cycle terminal |
+| `maxCycleWaitMinutes` | 240 | Hard cap on waiting for a cycle terminal; must exceed the bot's ~180 min hold |
 | `botResponseTimeoutMinutes` | 5 | `/stop`, `/stopauto`, inventory receipt, menu/body deadlines |
 | `menuResponseTimeoutSeconds` | 45 | `/tn` menu deadline |
 | `menuBusyRetrySeconds` | 15 | First `MENU_BUSY` backoff; doubles to 300 s |

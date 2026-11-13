@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 > Grounded in the source at commit `8c1b38b` (`v1.1`). Every statement below is traceable to a file in this repository. UI labels are quoted exactly as the code matches them.
 
@@ -197,10 +197,10 @@ Order of checks in one iteration:
    - If chat says running, scroll to tail and re-read (`verifyTailOrphan`).
    - If still running, gather 5 minutes of evidence (`confirmSuspectedWorker`); adopt or clear.
 6. Ensure the background ICON monitor is running (`runIconBuy`).
-7. If inventory availability is unknown, open the upgrade mini-app once and count ICON cards.
+7. If inventory availability is unknown, open the upgrade mini-app once and inspect ICON cards (`inspectInventoryIcons`).
    - A new "Đã nhận … cầu thủ trong kho mua" receipt forces an immediate re-check.
-   - No ICON: wait `inventoryCheckIntervalSeconds` (default 1800 s).
-   - ICON present: mark inventory known and continue.
+   - At least one ICON below `upgrade.targetGrade` (`eligible > 0`): mark inventory usable and continue.
+   - No ICON, or every ICON already at target / locked: wait `inventoryCheckIntervalSeconds` (default 1800 s); do not start a buy cycle.
 8. Acquire the UI lock and start a buy cycle:
    - `getTradeFrame()` → `configureCycle()` → verify "Bắt đầu Auto Mua" is enabled
    - capture start-ACK and cycle baselines
@@ -267,6 +267,7 @@ In the loop's `finally`:
 | `MINI_APP_NOT_OPENED` | Buy iframe not opened within 20 s | Reopen Telegram session, up to 2 attempts; `getTradeFrame` retries with fresh `/tn` |
 | `MINI_APP_LOAD_TIMEOUT` | Upgrade iframe not loaded in time | Reopen Telegram session, up to 2 attempts; `getUpgradeFrame` retries with fresh `/tn` |
 | `UPGRADE_MODE_LOAD_TIMEOUT` | Upgrade manual mode not selectable | Reopen Telegram session, up to 2 attempts |
+| `MINI_APP_SERVER_DOWN` | Bot mini-app shows `ERR_NGROK_*` / upstream connection refused | Bot-side outage: keep agent active and ICON monitor running; back off 60 s → 300 s and retry |
 | `BOT_SYSTEM_ERROR` | E006 anywhere | Set inactive and wait for `/startagent` |
 | `TELEGRAM_NAVIGATED` / navigation regex | Telegram reload/render context loss | Reopen chat/observer, keep worker running |
 | `TELEGRAM_CHAT_UNREADABLE` | ICON runner after 8 failed `/stop` reads | Reopen Telegram session |
@@ -276,6 +277,8 @@ In the loop's `finally`:
 | `TELEGRAM_LOGIN_REQUIRED` | Mini-app check | Propagates to recovery prompt |
 
 `MINI_APP_BP_LOAD_TIMEOUT` is produced by the buy frame wait after the bot response deadline; it is retried inside `getTradeFrame` up to `MINI_APP_BP_LOAD_RETRIES = 2`, then falls through to the generic recovery path.
+
+`MINI_APP_SERVER_DOWN` is produced when the iframe renders the bot's own infrastructure error page (`ERR_NGROK_8012`, "failed to establish a connection to the upstream web service", connection refused to `localhost:3000`). That is a bot-side outage, not an agent bug: both mini-app readers detect it immediately, the controller keeps `agentActive` and the ICON monitor untouched, and retries with a 60 s → 120 s → 240 s → 300 s backoff. The backoff resets after a successful inventory read, buy-frame open, or upgrade pivot.
 
 ### Generic recovery
 
@@ -314,7 +317,7 @@ Validation (`validateConfig`) enforces:
 | `maxPriceBP` | 777777 |
 | `quantityPerAttempt` | 3 |
 | `maxPerCycle` | 14 |
-| `maxCycleWaitMinutes` | 180 |
+| `maxCycleWaitMinutes` | 240 |
 | `botResponseTimeoutMinutes` | 5 |
 | `menuResponseTimeoutSeconds` | 45 |
 | `menuBusyRetrySeconds` | 15 |

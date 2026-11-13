@@ -505,6 +505,21 @@ function countInventoryIcons(cards) {
   return count;
 }
 
+// Tổng hợp kho ICON để quyết định có cần mua phôi hay không. Chỉ ICON dưới
+// target (eligible) mới là việc còn làm được; ICON đã đạt target không được
+// kích hoạt chu kỳ mua phôi, nếu không agent sẽ mua phôi + nâng lặp vô ích khi
+// con ICON duy nhất đã +target.
+function inspectInventoryIcons(cards, targetGrade) {
+  const summary = summarizeUpgradeTargetCards(cards, targetGrade);
+  return {
+    total: summary.eligible + summary.locked + summary.reachedTarget,
+    eligible: summary.eligible,
+    locked: summary.locked,
+    reachedTarget: summary.reachedTarget,
+    notIcon: summary.notIcon
+  };
+}
+
 // Sau khi tải lại kho, danh sách được coi là đã cạn target khi không còn thẻ
 // ICON nào dưới target và cũng không có thẻ nào đang bị khóa/training. Điều kiện
 // "không có thẻ khóa" rất quan trọng: trong lúc worker đang nâng, backend có thể
@@ -640,6 +655,7 @@ module.exports = {
   parseUpgradeTargetCards,
   summarizeUpgradeTargetCards,
   countInventoryIcons,
+  inspectInventoryIcons,
   parseOvrList,
   parseSelectedPhoiOvrs,
   verifyUpgradeFinalUi,

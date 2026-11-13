@@ -10,7 +10,8 @@ const {
 const {
   PLAYWRIGHT_TIMEOUT_MS,
   CHAT_TEXT_POLL_INTERVAL_MS,
-  MINI_APP_BLANK_TIMEOUT_MS
+  MINI_APP_BLANK_TIMEOUT_MS,
+  isMiniAppServerDown
 } = require("../../lib/bot-patterns");
 const {
   chatTextReaders
@@ -41,6 +42,19 @@ const START_BUTTON_NAME = "Bắt đầu Auto Mua";
 
 function shortenText(text, max = 180) {
   return String(text || "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+// Trang lỗi hạ tầng của bot (ngrok ERR_NGROK_* / upstream web service chết)
+// không phải lỗi render của mini-app: controller phải chờ bot khôi phục.
+function assertMiniAppServerUp(text) {
+  if (!isMiniAppServerDown(text)) return;
+  const error = new Error(
+    "Máy chủ mini-app Auto Mua của bot không phản hồi " +
+      "(ngrok không kết nối được upstream web service). " +
+      `Nội dung: ${shortenText(text, 160)}`
+  );
+  error.code = "MINI_APP_SERVER_DOWN";
+  throw error;
 }
 
 async function saveMiniAppDebug(page, error) {
@@ -112,6 +126,7 @@ async function waitForTradeFrame(page) {
         // Iframe vừa bị Telegram thay/refresh; vòng sau sẽ chọn lại frame.
       }
       lastBodyText = text;
+      assertMiniAppServerUp(text);
       if (isTradeFrameLoaded(text)) return frame;
       if (Date.now() - lastLoadingLogAt >= 15_000) {
         lastLoadingLogAt = Date.now();
@@ -133,6 +148,7 @@ async function waitForTradeFrame(page) {
         current = await frame.locator("body").innerText({ timeout: 3000 });
       } catch { /* iframe chưa có body */ }
       lastBodyText = current;
+      assertMiniAppServerUp(current);
       if (!shortenText(current)) {
         // Iframe trắng không phải "đang tải chậm". getTradeFrame sẽ đóng và thử
         // lại chính menu hiện có (không gửi /tn); nếu vẫn trắng thì controller

@@ -20,6 +20,7 @@ const {
   parseUpgradeTargetCards,
   summarizeUpgradeTargetCards,
   countInventoryIcons,
+  inspectInventoryIcons,
   isUpgradeTargetListExhausted,
   inspectUpgradeTargetAvailability,
   readUpgradeTargetCards,
@@ -466,6 +467,41 @@ test("counts distinct ICON cards in inventory, including cards at target grade",
     ]),
     2
   );
+});
+
+test("inspectInventoryIcons separates upgradeable ICONs from ones already at target", () => {
+  const icon = "https://x/season/ICON.png";
+  const allReached = inspectInventoryIcons(
+    [
+      { text: "A _id: aaa111 • +7", imgSrcs: [icon] },
+      { text: "B _id: bbb222 • +8", imgSrcs: [icon] },
+      { text: "C _id: ccc333 • +1", imgSrcs: ["https://x/season/TOTS.png"] }
+    ],
+    7
+  );
+  assert.deepEqual(allReached, {
+    total: 2,
+    eligible: 0,
+    locked: 0,
+    reachedTarget: 2,
+    notIcon: 1
+  });
+
+  const withTarget = inspectInventoryIcons(
+    [
+      { text: "A _id: aaa111 • +7", imgSrcs: [icon] },
+      { text: "B _id: bbb222 • +3", imgSrcs: [icon] },
+      { text: "C _id: ccc333 • +4", imgSrcs: [icon], disabled: true }
+    ],
+    7
+  );
+  assert.deepEqual(withTarget, {
+    total: 3,
+    eligible: 1,
+    locked: 1,
+    reachedTarget: 1,
+    notIcon: 0
+  });
 });
 
 test("reads target cards only from #targetsList, not the material list", async () => {

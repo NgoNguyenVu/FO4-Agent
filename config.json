@@ -4,7 +4,7 @@
   "maxPriceBP": 777777,
   "quantityPerAttempt": 3,
   "maxPerCycle": 14,
-  "maxCycleWaitMinutes": 180,
+  "maxCycleWaitMinutes": 240,
   "botResponseTimeoutMinutes": 5,
   "menuResponseTimeoutSeconds": 45,
   "menuBusyRetrySeconds": 15,

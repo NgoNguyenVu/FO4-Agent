@@ -51,7 +51,8 @@ const {
   parseCompletionNotices,
   countInventoryReceivedNotices,
   getLatestInventoryReceived,
-  hasNewFullInventoryStop
+  hasNewFullInventoryStop,
+  hasNewWorkerTokenStop
 } = require("./patterns");
 
 async function waitForStartAcknowledgement(page, baseline, rl, { ui = null } = {}) {
@@ -199,7 +200,12 @@ async function checkAutoBuyRunning(page, rl) {
 // Chờ chu kỳ hiện tại kết thúc: completed | purchase-stopped | inventory-full | system-error | stop-requested
 // Ưu tiên đọc phần tin mới (baselineText) để chống trôi khi chat bị trim hoặc
 // lẫn tin thủ công GLXH/chức năng khác; fallback đếm số lượng khi snapshot bị thay hẳn.
-async function waitForCycleCompletion(page, baseline, baselineText = null) {
+async function waitForCycleCompletion(
+  page,
+  baseline,
+  baselineText = null,
+  { isIgnorableSystemError = null } = {}
+) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
   const startedAt = Date.now();
@@ -213,6 +219,7 @@ async function waitForCycleCompletion(page, baseline, baselineText = null) {
   let lastProgressLogAt = startedAt;
   let lastOrphanClearedAt = 0;
   let hintBaseline = baselineText;
+  let freshBaselineText = baselineText;
   let snapshot = reader.snapshot();
   while (true) {
     if (Date.now() - startedAt > config.maxCycleWaitMinutes * 60_000) {
@@ -222,10 +229,40 @@ async function waitForCycleCompletion(page, baseline, baselineText = null) {
       );
     }
     if (reader.takeCommand("stopagent")) return { status: "stop-requested" };
-    const freshOutcome = getCycleOutcomeFromFresh(
-      getFreshSince(baselineText, snapshot.text),
-      snapshot.text
-    );
+    const fresh = getFreshSince(freshBaselineText, snapshot.text);
+    const systemErrorCount = countBotSystemErrors(snapshot.text);
+    const hasNewSystemError = systemErrorCount > baseline.systemErrors;
+    const ignoreNewSystemError =
+      hasNewSystemError &&
+      typeof isIgnorableSystemError === "function" &&
+      isIgnorableSystemError();
+    if (ignoreNewSystemError) {
+      // E006 do luồng ICON (cùng chat Telegram) không phải lỗi của chu kỳ Mua
+      // phôi. Vẫn kiểm tra các tín hiệu khác trong cùng cửa sổ: "Hết thời gian
+      // treo. Hoàn thành mua N cầu thủ" có thể đến ngay sau E006.
+      const outcomeIgnoringError = getCycleOutcomeFromFresh(fresh, snapshot.text, {
+        ignoreSystemErrors: true
+      });
+      if (outcomeIgnoringError) {
+        return {
+          ...outcomeIgnoringError,
+          inventoryReceiptBaseline: baseline.inventoryReceived,
+          inventoryReceiptBaselineText: freshBaselineText,
+          inventoryReceiptSystemErrors: baseline.systemErrors
+        };
+      }
+      // Đã xử lý E006 này: nâng mốc đếm + trượt cửa sổ fresh qua nó để vòng sau
+      // không nhận lại cùng một lỗi.
+      baseline.systemErrors = systemErrorCount;
+      freshBaselineText = snapshot.text;
+      hintBaseline = snapshot.text;
+      log(
+        "Bỏ qua E006 do luồng ICON vừa thao tác (cùng chat Telegram), " +
+          "không phải lỗi của chu kỳ Mua phôi; tiếp tục chờ kết quả chu kỳ."
+      );
+      continue;
+    }
+    const freshOutcome = getCycleOutcomeFromFresh(fresh, snapshot.text);
     if (freshOutcome) {
       return {
         ...freshOutcome,
@@ -252,7 +289,18 @@ async function waitForCycleCompletion(page, baseline, baselineText = null) {
         inventoryReceiptSystemErrors: baseline.systemErrors
       };
     }
-    if (hasNewBotSystemError(snapshot.text, baseline.systemErrors)) return { status: "system-error" };
+    if (hasNewWorkerTokenStop(snapshot.text, baseline.workerTokenStops ?? 0)) {
+      // Token phía bot hỏng làm worker tự dừng: không thể có completion nữa.
+      // Dừng ngay thay vì chờ hết maxCycleWaitMinutes.
+      return {
+        status: "system-error",
+        reason: "worker-token-stop",
+        inventoryReceiptBaseline: baseline.inventoryReceived,
+        inventoryReceiptBaselineText: baselineText,
+        inventoryReceiptSystemErrors: baseline.systemErrors
+      };
+    }
+    if (hasNewSystemError) return { status: "system-error" };
     if (hasNewFullInventoryStop(snapshot.text, baseline.inventoryFullStops)) {
       return {
         status: "inventory-full",

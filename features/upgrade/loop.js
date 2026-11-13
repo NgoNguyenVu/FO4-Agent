@@ -179,6 +179,15 @@ function decideMasterUpgradePhase(action) {
   return "idle";
 }
 
+// Kho có ICON nhưng không còn con nào nâng được (tất cả đã đạt target, hoặc
+// đang khóa) thì mua phôi là vô ích và dễ rơi vào vòng "kho đầy nhưng không
+// nhận được cầu thủ" rồi agent tự dừng. Chỉ mở chu kỳ mua phôi khi có ít nhất
+// một ICON dưới target đang nâng được; còn lại chờ ICON mới.
+function decideInventoryAction(inventory) {
+  if ((inventory?.eligible ?? 0) > 0) return "buy";
+  return "wait-new-icon";
+}
+
 // Kho đầy ở vòng master: chạy phase nâng liên tục.
 // - Còn target: nâng tiếp (target thiếu phôi "possible" -> blacklist, thử con khác).
 // - Hết phôi: quay lại mua.
@@ -220,7 +229,10 @@ async function pivotMasterToUpgrade(page, rl, runUpgrade = runSingleUpgrade, log
             "quay lại Auto Mua để mua thêm phôi."
         );
       } else {
-        logFn("Hết icon dưới target trong phase nâng; quay lại Auto Mua để mua phôi tiếp.");
+        logFn(
+          "Hết icon dưới target trong phase nâng; quay lại kiểm tra kho " +
+            "trước khi quyết định mua phôi hay chờ ICON mới."
+        );
       }
       return { agentActive: true };
     }
@@ -233,5 +245,6 @@ module.exports = {
   runSingleUpgrade,
   shouldResumeBuyAfterUpgrade,
   decideMasterUpgradePhase,
+  decideInventoryAction,
   pivotMasterToUpgrade
 };

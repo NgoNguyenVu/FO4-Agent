@@ -16,6 +16,7 @@ const { config } = require("../config");
 const { log } = require("../agent-log");
 const { ensureMessageComposer } = require("../composer");
 const { sendBotCommand, sendTnCommand } = require("../telegram-io");
+const { markIconActivity } = require("../../lib/icon-activity");
 const {
   hasIconMenuSignature,
   getLatestBotError,
@@ -94,6 +95,7 @@ async function ensureFeatureButton(
   // nhường cho backoff bên ngoài, không gửi dồn trong cùng một lượt.
   const baseline = reader.snapshot();
   const composer = await ensureMessageComposer(page, rl);
+  markIconActivity();
   await sendTnCommand(page, composer);
   log(`Đã gửi /tn để lấy menu cho nút "${label}".`);
 
@@ -177,6 +179,7 @@ async function clickFeatureButton(
     forceRefresh = false;
     const baseline = reader.snapshot();
     try {
+      markIconActivity();
       await withTimeout(target.click(), 30_000, `bấm nút ${label}`);
     } catch (error) {
       if (attempt >= retries) throw error;
@@ -234,12 +237,14 @@ async function sendMultilineMessage(page, rl, text) {
       `Không nhập đủ danh sách cầu thủ vào ô chat Telegram (thiếu dòng ${missingLine.trim()}).`
     );
   }
+  markIconActivity();
   await withTimeout(composer.press("Enter"), PLAYWRIGHT_TIMEOUT_MS, "gửi danh sách cầu thủ");
   log(`Đã gửi ${lines.length} dòng đặt mua ICON.`);
 }
 
 async function sendSingleLineMessage(page, rl, text) {
   const composer = await ensureMessageComposer(page, rl);
+  markIconActivity();
   await sendBotCommand(page, composer, text);
 }
 

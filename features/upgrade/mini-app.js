@@ -6,7 +6,10 @@ const {
   withTimeout,
   isBrowserSessionClosed
 } = require("../../lib/playwright-utils");
-const { MINI_APP_BLANK_TIMEOUT_MS } = require("../../lib/bot-patterns");
+const {
+  MINI_APP_BLANK_TIMEOUT_MS,
+  isMiniAppServerDown
+} = require("../../lib/bot-patterns");
 const {
   chatTextReaders,
   waitForChatChange
@@ -157,6 +160,17 @@ async function waitForUpgradeFrameReady(page, timeoutMs) {
       lastFrameInfo = info;
       text = await frame.locator("body").innerText({ timeout: 3000 });
       lastText = text;
+      if (isMiniAppServerDown(text)) {
+        // Trang lỗi hạ tầng của bot (ngrok không nối được upstream). Không thử
+        // mở lại vô ích; trả lỗi riêng để controller chờ bot khôi phục.
+        const error = new Error(
+          "Máy chủ mini-app nâng cấp của bot không phản hồi " +
+            "(ngrok không kết nối được upstream web service). " +
+            `Nội dung: ${text.replace(/\s+/g, " ").slice(0, 160)}`
+        );
+        error.code = "MINI_APP_SERVER_DOWN";
+        throw error;
+      }
       if (
         !text.trim() &&
         firstFrameAt &&
@@ -192,7 +206,9 @@ async function waitForUpgradeFrameReady(page, timeoutMs) {
       }
     } catch (error) {
       formReadySince = 0;
-      if (error.code === "MINI_APP_BLANK") throw error;
+      if (error.code === "MINI_APP_BLANK" || error.code === "MINI_APP_SERVER_DOWN") {
+        throw error;
+      }
       if (isBrowserSessionClosed(error, page)) throw error;
       // chưa load xong
     }
@@ -371,7 +387,9 @@ async function openUpgradeFrame(page, rl, forceTn = false) {
         if (ready) return ready;
       }
     } catch (error) {
-      if (error.code === "MINI_APP_BLANK") throw error;
+      if (error.code === "MINI_APP_BLANK" || error.code === "MINI_APP_SERVER_DOWN") {
+        throw error;
+      }
       /* mở mới */
     }
   }

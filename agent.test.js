@@ -34,16 +34,24 @@ const {
   shouldRetryMiniAppOpen,
   isEarlyCompletion,
   STALE_COMPLETION_GUARD_MS,
-  waitForInventoryReceipt
+  waitForInventoryReceipt,
+  hasNewWorkerTokenStop
 } = require("./features/buy");
 const {
   countBotRateLimitNotices,
   countBotSystemErrors,
   hasNewBotSystemError,
+  stripBotSystemErrors,
   getNewBotRateLimitDelay,
   getFreshRateLimitDelay,
   throwBotSystemError
 } = require("./lib/bot-signals");
+const {
+  ICON_E006_ATTRIBUTION_MS,
+  markIconActivity,
+  isRecentIconActivity,
+  resetIconActivity
+} = require("./lib/icon-activity");
 const {
   chatTextReaders,
   createChatTextTracker,
@@ -81,11 +89,13 @@ const {
   BOT_COMMAND_DELAY_MS,
   TN_COMMAND_COOLDOWN_MS,
   MINI_APP_BLANK_TIMEOUT_MS,
-  BUY_START_ACK_TIMEOUT_MS
+  BUY_START_ACK_TIMEOUT_MS,
+  isMiniAppServerDown
 } = require("./lib/bot-patterns");
 const {
   shouldResumeBuyAfterUpgrade,
   decideMasterUpgradePhase,
+  decideInventoryAction,
   pivotMasterToUpgrade,
   settleUpgradeOutcome
 } = require("./features/upgrade");
@@ -1320,6 +1330,105 @@ test("an old E006 in the baseline tail does not retrigger a system error", () =>
   });
 });
 
+test("E006 caused by the ICON flow does not end the buy cycle", () => {
+  const baseline = "Bắt đầu treo auto mua (w1)";
+  const e006 = "E006: Lỗi hệ thống, vui lòng thử lại sau hoặc liên hệ hỗ trợ.";
+
+  // Không có mốc ICON: E006 vẫn là lỗi hệ thống của chu kỳ (giữ hành vi cũ).
+  const iconError = `${baseline}\n${e006}`;
+  const freshError = getFreshSince(baseline, iconError);
+  assert.deepEqual(getCycleOutcomeFromFresh(freshError, iconError), {
+    status: "system-error"
+  });
+
+  // E006 quy cho ICON: bỏ qua lỗi, chưa có kết quả chu kỳ thì vẫn chờ tiếp.
+  assert.equal(
+    getCycleOutcomeFromFresh(freshError, iconError, { ignoreSystemErrors: true }),
+    null
+  );
+
+  // "Hết thời gian treo. Hoàn thành mua 13 cầu thủ" đến ngay sau E006 trong cùng
+  // cửa sổ chat vẫn phải được nhận đúng kết quả.
+  const withCompletion = `${iconError}\nHết thời gian treo. Hoàn thành mua 13 cầu thủ`;
+  const freshCompletion = getFreshSince(baseline, withCompletion);
+  assert.deepEqual(
+    getCycleOutcomeFromFresh(freshCompletion, withCompletion, {
+      ignoreSystemErrors: true
+    }),
+    { status: "completed", playersBought: 13 }
+  );
+  assert.match(
+    stripBotSystemErrors(freshCompletion),
+    /Hoàn thành mua 13 cầu thủ/
+  );
+  assert.equal(countBotSystemErrors(stripBotSystemErrors(freshCompletion)), 0);
+});
+
+test("ICON E006 attribution only covers the recent activity window", () => {
+  resetIconActivity();
+  assert.equal(isRecentIconActivity(undefined, Date.now()), false);
+
+  markIconActivity(1_000);
+  assert.equal(
+    isRecentIconActivity(ICON_E006_ATTRIBUTION_MS, 1_000 + ICON_E006_ATTRIBUTION_MS),
+    true
+  );
+  assert.equal(
+    isRecentIconActivity(ICON_E006_ATTRIBUTION_MS, 1_001 + ICON_E006_ATTRIBUTION_MS),
+    false
+  );
+
+  resetIconActivity();
+  assert.equal(isRecentIconActivity(), false);
+});
+
+test("a worker stopped by token refresh failure ends the cycle immediately", () => {
+  const baseline =
+    "Bắt đầu treo auto mua (w1)\nĐang treo mua cho chatId 1917864682";
+  const tokenError =
+    "E006: Không thể làm mới token, vui lòng liên hệ hỗ trợ.\n" +
+    "E006: Không thể làm mới token, vui lòng liên hệ hỗ trợ.\n" +
+    "Worker dừng do không thể làm mới token sau 3 lần thử";
+
+  // E006 token KHÔNG bị đếm như E006 "Lỗi hệ thống" (tránh nhầm với ICON).
+  assert.equal(countBotSystemErrors(tokenError), 0);
+
+  const current = `${baseline}\n${tokenError}`;
+  const fresh = getFreshSince(baseline, current);
+  assert.deepEqual(getCycleOutcomeFromFresh(fresh, current), {
+    status: "system-error",
+    reason: "worker-token-stop"
+  });
+  // Phải nhận cả khi đang bỏ qua E006 của ICON: worker dừng là terminal thật.
+  assert.deepEqual(
+    getCycleOutcomeFromFresh(fresh, current, { ignoreSystemErrors: true }),
+    { status: "system-error", reason: "worker-token-stop" }
+  );
+
+  const baselineInfo = getCycleBaseline(baseline);
+  assert.equal(baselineInfo.workerTokenStops, 0);
+  assert.equal(
+    hasNewWorkerTokenStop(current, baselineInfo.workerTokenStops),
+    true
+  );
+  assert.equal(
+    hasNewWorkerTokenStop(baseline, baselineInfo.workerTokenStops),
+    false
+  );
+
+  // Cùng một tin cũ trong baseline không được kích hoạt lại.
+  const afterStop = getCycleBaseline(current);
+  assert.equal(afterStop.workerTokenStops, 1);
+  assert.equal(
+    hasNewWorkerTokenStop(current, afterStop.workerTokenStops),
+    false
+  );
+  assert.match(
+    idleOutcomeMessage({ status: "system-error", reason: "worker-token-stop" }),
+    /token/i
+  );
+});
+
 test("/stop check from fresh text ignores interleaved manual GLXH traffic", () => {
   const baselineText = "Bắt đầu treo auto mua (w1)\nĐang treo mua cho chatId 1";
   const glxhNoise =
@@ -1809,11 +1918,31 @@ test("upgrade run detector is reachable at module scope", () => {
 test("master upgrade phase returns to buying when phôi or targets run out", () => {
   // blocked-target -> blacklist + thử target khác
   assert.equal(decideMasterUpgradePhase("blocked-target"), "continue");
-  // hết phôi / hết target khả thi -> quay lại mua phôi
+  // hết phôi / hết target khả thi -> quay lại kiểm tra kho
   assert.equal(decideMasterUpgradePhase("no-materials"), "buy");
   assert.equal(decideMasterUpgradePhase("no-targets"), "buy");
   // không đổi kho -> dừng để tránh vòng lặp vô ích
   assert.equal(decideMasterUpgradePhase("no-progress"), "idle");
+});
+
+test("inventory with only +target ICONs waits for a new ICON instead of buying phôi", () => {
+  // ICON duy nhất đã +7: không còn việc nâng -> không được mở chu kỳ mua phôi.
+  assert.equal(
+    decideInventoryAction({ total: 1, eligible: 0, locked: 0, reachedTarget: 1 }),
+    "wait-new-icon"
+  );
+  // Kho trống cũng chờ ICON mới.
+  assert.equal(
+    decideInventoryAction({ total: 0, eligible: 0, locked: 0, reachedTarget: 0 }),
+    "wait-new-icon"
+  );
+  // Có ICON dưới target -> mua phôi để nâng.
+  assert.equal(
+    decideInventoryAction({ total: 2, eligible: 1, locked: 1, reachedTarget: 0 }),
+    "buy"
+  );
+  // Dữ liệu kho chưa đọc được -> giữ an toàn, không mua.
+  assert.equal(decideInventoryAction(null), "wait-new-icon");
 });
 
 test("master upgrade phase keeps upgrading then returns to buying", async () => {
@@ -1973,6 +2102,67 @@ test("transient inventory read failure keeps the master loop alive", () => {
   // "không có task nào chạy" khi menu /stop vẫn liệt kê task ICON.
   assert.match(cycleSrc, /luồng Mua phôi/);
   assert.match(cycleSrc, /task MUA khác \(ICON\)/);
+});
+
+test("detects bot mini-app server outages from the ngrok error page", () => {
+  assert.equal(
+    isMiniAppServerDown(
+      "ERR_NGROK_8012 Traffic successfully made it to the ngrok agent, but " +
+        "the agent failed to establish a connection to the upstream web " +
+        "service at http://localhost:3000."
+    ),
+    true
+  );
+  assert.equal(
+    isMiniAppServerDown(
+      "dial tcp [::1]:3000: connectex: No connection could be made because " +
+        "the target machine actively refused it."
+    ),
+    true
+  );
+  assert.equal(isMiniAppServerDown("Đã khởi động Auto Nâng Cấp"), false);
+  assert.equal(isMiniAppServerDown(""), false);
+});
+
+test("bot mini-app server outage keeps the agent alive instead of stopping it", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  const handlerStart = controllerSrc.indexOf(
+    'if (error.code === "MINI_APP_SERVER_DOWN")'
+  );
+  assert.ok(handlerStart > -1, "controller must special-case MINI_APP_SERVER_DOWN");
+  const nextBlock = controllerSrc.indexOf('"MINI_APP_BLANK"', handlerStart);
+  assert.ok(nextBlock > handlerStart);
+  const handlerSlice = controllerSrc.slice(handlerStart, nextBlock);
+  // Lỗi hạ tầng phía bot: backoff rồi thử lại, KHÔNG về idle và KHÔNG dừng
+  // luồng ICON (worker ICON vẫn có thể đang chạy phía bot).
+  assert.match(handlerSlice, /continue;/);
+  assert.match(handlerSlice, /thử lại sau/);
+  assert.doesNotMatch(handlerSlice, /agentActive = false/);
+  assert.doesNotMatch(handlerSlice, /stopIconMonitor/);
+
+  const upgradeMiniAppSrc = fs.readFileSync(
+    path.join(__dirname, "features/upgrade/mini-app.js"),
+    "utf8"
+  );
+  assert.match(upgradeMiniAppSrc, /isMiniAppServerDown\(text\)/);
+  assert.match(upgradeMiniAppSrc, /MINI_APP_SERVER_DOWN/);
+  // Trang lỗi server không bị nuốt bởi nhánh "chưa load xong".
+  assert.match(
+    upgradeMiniAppSrc,
+    /error\.code === "MINI_APP_BLANK"\s*\|\|\s*error\.code === "MINI_APP_SERVER_DOWN"/
+  );
+
+  const buyMiniAppSrc = fs.readFileSync(
+    path.join(__dirname, "features/buy/mini-app.js"),
+    "utf8"
+  );
+  assert.match(buyMiniAppSrc, /assertMiniAppServerUp\(/);
+  assert.match(buyMiniAppSrc, /MINI_APP_SERVER_DOWN/);
 });
 
 test("inventory checks are spaced by config and open the mini-app once per check", () => {

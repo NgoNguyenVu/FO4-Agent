@@ -26,6 +26,7 @@ const {
   countBotSystemErrors,
   hasNewBotSystemError
 } = require("../lib/bot-signals");
+const { isRecentIconActivity } = require("../lib/icon-activity");
 const {
   CONTROL_START_COMMANDS,
   CONTROL_MODE_BY_COMMAND
@@ -71,7 +72,8 @@ const {
 const {
   runSingleUpgrade,
   pivotMasterToUpgrade,
-  checkInventoryIcons
+  checkInventoryIcons,
+  decideInventoryAction
 } = require("./upgrade");
 const { runIconBuy } = require("./icon-buy");
 
@@ -103,6 +105,9 @@ async function main() {
   let nextMenuAttemptAt = 0;
   // Khi bot chưa trả menu, giãn dần khoảng thử lại để không gửi /tn dồn dập.
   let menuBackoffSeconds = config.menuBusyRetrySeconds;
+  // Mini-app của bot chết hạ tầng (ngrok/upstream web service) là lỗi phía
+  // bot, không phải lỗi agent: giãn dần thời gian thử lại thay vì tự dừng.
+  let miniAppServerDownBackoffSeconds = 60;
   let pendingBuyCompletion = null;
   let initialWorkerCheckDone = false;
   let inventoryKnownAvailable = false;
@@ -202,6 +207,10 @@ async function main() {
       ui
     });
     if (next.pivotToUpgrade) {
+      // Đặt lại trước khi pivot: nếu mini-app nâng lỗi hạ tầng (bot down) thì
+      // lần chạy lại vẫn kiểm tra kho trước, không nhảy thẳng vào mua phôi.
+      inventoryKnownAvailable = false;
+      nextInventoryCheckAt = 0;
       const pivot = await pivotMasterToUpgrade(
         page,
         rl,
@@ -209,8 +218,7 @@ async function main() {
         log,
         ui
       );
-      inventoryKnownAvailable = false;
-      nextInventoryCheckAt = 0;
+      miniAppServerDownBackoffSeconds = 60;
       agentActive = pivot.agentActive;
       if (pivot.mode && pivot.mode !== "icon") mode = pivot.mode;
       return false;
@@ -231,9 +239,10 @@ async function main() {
   // iconBuy.inventoryCheckIntervalSeconds quy định (mặc định 30 phút).
   const checkMasterInventory = async () => {
     await ui.acquire();
-    let count = null;
+    let inventory = null;
     try {
-      count = await checkInventoryIcons(page, rl);
+      inventory = await checkInventoryIcons(page, rl);
+      miniAppServerDownBackoffSeconds = 60;
     } catch (error) {
       if (error.code !== "INVENTORY_READ_UNCONFIRMED") throw error;
       log(
@@ -244,14 +253,34 @@ async function main() {
     } finally {
       ui.release();
     }
-    if (count > 0) return true;
-    log(
-      "Kho chưa có ICON; giữ agent sống và kiểm tra lại sau " +
-        `${Math.max(
-          1,
-          Math.round(config.iconBuy.inventoryCheckIntervalSeconds / 60)
-        )} phút thay vì mở mini-app liên tục.`
+    // Chỉ mua phôi khi còn ICON dưới target. Nếu con ICON duy nhất đã +target
+    // thì mua phôi chỉ khiến bot báo kho đầy rồi agent dừng vì không có receipt
+    // mới; chờ ICON mới rồi mới bật lại mua phôi + nâng.
+    if (decideInventoryAction(inventory) === "buy") return true;
+    const intervalMinutes = Math.max(
+      1,
+      Math.round(config.iconBuy.inventoryCheckIntervalSeconds / 60)
     );
+    const targetGrade = config.upgrade.targetGrade;
+    if (inventory.total === 0) {
+      log(
+        "Kho chưa có ICON; giữ agent sống và kiểm tra lại sau " +
+          `${intervalMinutes} phút thay vì mở mini-app liên tục.`
+      );
+    } else if (inventory.reachedTarget >= inventory.total) {
+      log(
+        `Kho có ${inventory.total} ICON nhưng tất cả đã đạt +${targetGrade}; ` +
+          "dừng mua phôi + nâng, chờ ICON mới hoặc khi bot báo nhận cầu thủ " +
+          `(kiểm tra lại sau ${intervalMinutes} phút).`
+      );
+    } else {
+      log(
+        `Kho có ${inventory.total} ICON nhưng chưa có icon nào nâng được ` +
+          `(${inventory.locked} đang khóa, ${inventory.reachedTarget} đã đạt +${targetGrade}); ` +
+          "chưa mua phôi, kiểm tra lại sau " +
+          `${intervalMinutes} phút hoặc khi bot báo nhận cầu thủ.`
+      );
+    }
     return false;
   };
 
@@ -398,7 +427,12 @@ async function main() {
         if (status.running) {
           const adoptedWorker = getLatestWorkerId(status.baselineText) || "không rõ";
           log(`Bot đang có luồng Mua phôi (worker ${adoptedWorker}); agent chờ luồng này hoàn tất.`);
-          const outcome = await waitForCycleCompletion(page, status.baseline, status.baselineText);
+          const outcome = await waitForCycleCompletion(
+            page,
+            status.baseline,
+            status.baselineText,
+            { isIgnorableSystemError: () => isRecentIconActivity() }
+          );
           rememberBuyCompletion(outcome, "adopted-worker");
           const openNext = await handleBuyOutcome(
             outcome,
@@ -435,7 +469,12 @@ async function main() {
           } else {
             const adoptOutcome =
               confirm.decision === "adopt"
-                ? await waitForCycleCompletion(page, confirm.baseline, confirm.baselineText)
+                ? await waitForCycleCompletion(
+                    page,
+                    confirm.baseline,
+                    confirm.baselineText,
+                    { isIgnorableSystemError: () => isRecentIconActivity() }
+                  )
                 : confirm.outcome;
             rememberBuyCompletion(adoptOutcome, "suspected-worker");
             const openNext = await handleBuyOutcome(
@@ -493,6 +532,7 @@ async function main() {
       await ui.acquire();
       try {
         const frame = await getTradeFrame(page, rl);
+        miniAppServerDownBackoffSeconds = 60;
         menuBackoffSeconds = config.menuBusyRetrySeconds;
         nextMenuAttemptAt = 0;
         if (hasNewBotSystemError(reader.snapshot().text, systemErrorCountBeforeMenu)) {
@@ -543,7 +583,12 @@ async function main() {
         pendingBuyCompletion = null;
         log("Đã bắt đầu lại chu kỳ mua; hoàn tất cũ đã được xử lý.");
       }
-      let outcome = await waitForCycleCompletion(page, cycleBaseline, acknowledgedCycleText);
+      let outcome = await waitForCycleCompletion(
+        page,
+        cycleBaseline,
+        acknowledgedCycleText,
+        { isIgnorableSystemError: () => isRecentIconActivity() }
+      );
       if (isEarlyCompletion(outcome, Date.now() - cycleStartedAt)) {
         // Tin hoàn tất đến vài giây sau khi bắt đầu gần như chắc chắn là tin cũ
         // bị phát lại. Xác minh bằng /stop: worker còn chạy thì bỏ qua tin cũ,
@@ -565,7 +610,8 @@ async function main() {
           outcome = await waitForCycleCompletion(
             page,
             getCycleBaseline(snap.text),
-            snap.text
+            snap.text,
+            { isIgnorableSystemError: () => isRecentIconActivity() }
           );
         }
         if (earlyStatus?.running) {
@@ -576,7 +622,8 @@ async function main() {
           outcome = await waitForCycleCompletion(
             page,
             earlyStatus.baseline,
-            earlyStatus.baselineText
+            earlyStatus.baselineText,
+            { isIgnorableSystemError: () => isRecentIconActivity() }
           );
         }
       }
@@ -622,6 +669,24 @@ async function main() {
         );
         sessionUnavailable = true;
         await new Promise((resolve) => setTimeout(resolve, 1_000));
+        continue;
+      }
+      if (error.code === "MINI_APP_SERVER_DOWN") {
+        // Trang lỗi ERR_NGROK_* / "upstream web service" = máy chủ mini-app
+        // phía bot chết. Không phải lỗi agent và không sửa được bằng cách mở
+        // lại Telegram Web; giữ agent sống và thử lại giãn dần cho tới khi bot
+        // khôi phục. Không dừng worker ICON đang chạy.
+        const backoffSeconds = miniAppServerDownBackoffSeconds;
+        miniAppServerDownBackoffSeconds = Math.min(backoffSeconds * 2, 300);
+        nextMenuAttemptAt = Date.now() + backoffSeconds * 1_000;
+        miniAppRecoveryAttempts = 0;
+        log(
+          "Máy chủ mini-app của bot đang lỗi (ngrok/upstream web service), " +
+            "không phải lỗi agent. " +
+            `Chi tiết: ${String(error.message || "").replace(/\s+/g, " ").slice(0, 180)}. ` +
+            "Giữ agent sống, không dừng worker ICON; " +
+            `thử lại sau ${backoffSeconds} giây.`
+        );
         continue;
       }
       if (

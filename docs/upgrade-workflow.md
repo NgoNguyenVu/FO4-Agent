@@ -23,7 +23,9 @@ flowchart TD
   PIVOT --> RUN["runSingleUpgrade()"]
   RUN --> DECIDE{"Action"}
   DECIDE -- continue / blocked-target --> RUN
-  DECIDE -- no-materials / no-targets --> BUY
+  DECIDE -- no-materials / no-targets --> CHECK{"Inventory has an ICON below target?"}
+  CHECK -- yes --> BUY
+  CHECK -- no --> WAIT["Wait for a new ICON"]
   DECIDE -- idle / targets-exhausted / no-progress --> IDLE
 ```
 
@@ -358,10 +360,15 @@ The phase starts with a fresh `blockedTargetIds = new Set()` (the blacklist last
    - Otherwise log "Nâng cấp xong mà kho không thay đổi gì …" and return `{ agentActive: false }`.
 3. `decideMasterUpgradePhase(action)`:
    - `continue` / `blocked-target` → try another target
-   - `no-materials` / `no-targets` → return `{ agentActive: true }` so the controller resumes buying
+   - `no-materials` / `no-targets` → return `{ agentActive: true }` so the controller re-checks inventory
    - anything else (`idle`, `targets-exhausted`, `no-progress`) → return `{ agentActive: false }`
 
-The buy cycle then runs again, collects more phôi, and another inventory-full event starts a new upgrade phase.
+The controller then calls `checkInventoryIcons` again and applies `decideInventoryAction`:
+
+- `eligible > 0` (an ICON is still below target) → resume buying phôi.
+- `eligible === 0` (inventory empty, or every ICON already `+targetGrade` / locked) → do **not** buy; wait for a new ICON.
+
+This breaks the previous loop where a single ICON at `+7` made the agent buy phôi, hit "inventory full", receive no new receipt, and stop after 5 minutes. The ICON monitor keeps running in the background, and a new "Đã nhận … cầu thủ trong kho mua" receipt forces an immediate inventory re-check.
 
 ## 15. Stopping upgrades
 

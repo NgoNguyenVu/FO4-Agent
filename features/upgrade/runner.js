@@ -50,7 +50,7 @@ const {
   getOrphanUpgradeOutcome,
   parseUpgradeTargetCards,
   summarizeUpgradeTargetCards,
-  countInventoryIcons,
+  inspectInventoryIcons,
   parseOvrList
 } = require("./patterns");
 const {
@@ -541,9 +541,14 @@ async function checkInventoryIcons(page, rl) {
         "đọc lại số icon trong kho"
       );
     }
-    const count = countInventoryIcons(cards);
-    log(`Kiểm tra kho trước khi chạy: còn ${count} icon.`);
-    return count;
+    const spec = getUpgradeSpec();
+    const inventory = inspectInventoryIcons(cards, spec.targetGrade);
+    log(
+      `Kiểm tra kho trước khi chạy: ${inventory.total} icon ` +
+        `(${inventory.eligible} còn nâng được, ${inventory.locked} khóa, ` +
+        `${inventory.reachedTarget} đã đạt +${spec.targetGrade}).`
+    );
+    return inventory;
   } finally {
     if (frame) await closeMiniApp(page).catch(() => {});
   }
