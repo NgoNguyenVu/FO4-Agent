@@ -1,9 +1,15 @@
 # Roadmap — FO4-Agent
 
-- **Cập nhật:** 2026-11-04 (TASK-032 evidence — B1–B9 closed; TASK-001 REMEDIATION_COMPLETE, chờ re-review + QA; TASK-007 AUTHORIZATION_REQUIRED)
+- **Cập nhật:** 2026-11-13 (cycle v1 — Stage A xong cho TASK-004/005/003; xem `docs/completed/CYCLE-2026-11-13.md`)
 - **Người lập:** Architect Agent; cập nhật bởi Manager Agent
-- **Nguồn dữ liệu:** `docs/backlog.md` + Cortex MCP (`cortex_cypher`, `cortex_code_context`, `cortex_code_impact`, `cortex_detect_changes`).
+- **Nguồn dữ liệu:** `docs/backlog.md` + Cortex MCP (`cortex_code_search`, `cortex_code_context`, `cortex_detect_changes`, `cortex_code_impact`).
 - **Trạng thái:** Roadmap đề xuất, chưa cam kết ngày cứng. Thời lượng là ước tính cho một team nhỏ.
+
+## 0. Cập nhật cycle 2026-11-13
+
+- **Đã xong (Stage A):** TASK-004 (lifecycle/shutdown/heartbeat), TASK-005 (process lock + worker registry), TASK-003 (spend guard + config, chưa enforcement).
+- **Mốc tiếp theo:** TASK-003 Stage B (Owner Decision) → TASK-005 Stage B (controller dùng registry) → TASK-004 Stage B (integration test) → TASK-039/TASK-001 đóng.
+- **Điều kiện:** không merge/push `main` cho tới khi TASK-001 + TASK-039 hoàn tất review/QA và có authorization tài chính.
 
 ## 1. Architecture snapshot
 
