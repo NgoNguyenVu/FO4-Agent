@@ -6,7 +6,7 @@
 - **Risk:** High
 - **Effort:** M
 - **Dependency:** TASK-007
-- **Status:** Todo
+- **Status:** **DONE (Stage A)** — 2026-11-13, branch `ai/auto-cycle-v1`; Reviewer APPROVED + QA PASS; Quality Gate B (83/100). Xem [completed/TASK-004-graceful-shutdown.md](../completed/TASK-004-graceful-shutdown.md). Stage B (integration signal test + ownership registry) chuyển backlog.
 - **Owner đề xuất:** Platform / Reliability
 
 ## 1. Mục tiêu

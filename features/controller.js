@@ -38,6 +38,7 @@ const {
 const { config, validateConfig } = require("./config");
 const { log, logError } = require("./agent-log");
 const { createUiLock } = require("../lib/ui-lock");
+const { getLifecycle } = require("../lib/lifecycle");
 const {
   promptWakeable,
   wakePendingPrompt,
@@ -73,7 +74,8 @@ const {
   runSingleUpgrade,
   pivotMasterToUpgrade,
   checkInventoryIcons,
-  decideInventoryAction
+  decideInventoryAction,
+  stopUpgradeWorker
 } = require("./upgrade");
 const { runIconBuy } = require("./icon-buy");
 
@@ -170,6 +172,51 @@ async function main() {
         iconMonitor = null;
       });
   };
+
+  // TASK-004: dọn tài nguyên khi SIGINT/SIGTERM/uncaughtException. Handler chạy
+  // một lần, có timeout cứng trong lib/lifecycle. Chỉ dừng worker do agent sở
+  // hữu (agentActive) và chỉ gửi /stopauto hoặc /stopnc — không đụng task MUA
+  // thủ công vì các lệnh này không dừng task thủ công.
+  getLifecycle().register({
+    name: "controller",
+    onShutdown: async (reason) => {
+      remoteResetRequested = true;
+      iconStopRequested = true;
+      try {
+        await stopIconMonitor(`shutdown:${reason}`);
+      } catch (error) {
+        logError(`Không dừng được luồng ICON khi shutdown: ${error.message}`);
+      }
+      if (agentActive) {
+        const stopWorkers =
+          mode === "nang"
+            ? [stopUpgradeWorker]
+            : [stopPurchaseWorker, stopUpgradeWorker];
+        for (const stopWorker of stopWorkers) {
+          try {
+            await stopWorker(page, rl);
+          } catch (error) {
+            logError(`Không dừng được worker khi shutdown: ${error.message}`);
+          }
+        }
+      }
+      try {
+        await closeMiniApp(page);
+      } catch (error) {
+        logError(`Không đóng được mini-app khi shutdown: ${error.message}`);
+      }
+      try {
+        await context.close();
+      } catch (error) {
+        logError(`Không đóng được trình duyệt khi shutdown: ${error.message}`);
+      }
+      try {
+        rl.close();
+      } catch {
+        // readline đã đóng.
+      }
+    }
+  });
   const rememberBuyCompletion = (outcome, source) => {
     const record = createBuyCompletionRecord(outcome, source);
     if (record) pendingBuyCompletion = record;
@@ -301,6 +348,8 @@ async function main() {
   );
 
   while (true) {
+    if (getLifecycle().isStopping()) break;
+    getLifecycle().updateHeartbeat({ mode, agentActive });
     const enteredActive = agentActive;
     try {
       if (sessionUnavailable) {

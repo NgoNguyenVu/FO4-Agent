@@ -1,4 +1,7 @@
+const path = require("node:path");
 const { runAgent } = require("./features/controller");
+const { dataDir, log, logError } = require("./features/agent-log");
+const { getLifecycle } = require("./lib/lifecycle");
 
 // `runAgent()` chạy vòng điều khiển nội bộ (main) và tự xử lý mọi lỗi có thể
 // phục hồi (E006, mất session, timeout...) ngay trong vòng lặp của nó. Vì vậy nó
@@ -7,6 +10,21 @@ const { runAgent } = require("./features/controller");
 // tránh vòng lặp vô hạn khi lỗi là cố định (vd config sai).
 const MAX_STARTUP_RETRIES = 3;
 
+const lifecycle = getLifecycle({
+  log: (message) => log(message),
+  logError: (message) => logError(message),
+  // Heartbeat nằm ngoài repo để `git status` vẫn sạch.
+  heartbeatPath: path.join(dataDir, "state", "heartbeat.json")
+});
+lifecycle.installSignalHandlers();
+lifecycle.startHeartbeat({
+  pid: process.pid,
+  startedAt: new Date().toISOString(),
+  version: require("./package.json").version,
+  mode: null,
+  activeWorkerId: null
+});
+
 async function main() {
   for (let attempt = 0; attempt <= MAX_STARTUP_RETRIES; attempt += 1) {
     try {
@@ -14,6 +32,8 @@ async function main() {
       return;
     } catch {
       // Lỗi đã được runAgent ghi log; ở đây chỉ quyết định thử lại.
+      // Nếu đang shutdown (signal/exception) thì không restart.
+      if (lifecycle.isStopping()) return;
       if (attempt === MAX_STARTUP_RETRIES) break;
       console.log(`Restarting agent (lần ${attempt + 1}/${MAX_STARTUP_RETRIES}) sau 10 giây...`);
       await new Promise((resolve) => setTimeout(resolve, 10_000));
