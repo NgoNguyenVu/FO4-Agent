@@ -49,4 +49,4 @@ Revert 4 file của task (xem commit bên dưới). Không có migration/state c
 
 ## 7. Commit
 
-`COMMIT_AUTHORIZED` (Standard Task, không high-risk gate) — commit riêng trên `ai/auto-cycle-v1`: **`1205124`** — `feat(reliability): add lifecycle and graceful shutdown (TASK-004)` (9 file, +689/−2).
+`COMMIT_AUTHORIZED` (Standard Task, không high-risk gate) — commit riêng trên `ai/auto-cycle-v1`: xem `git log --oneline --grep "TASK-004"` (hash cuối cùng được ghi trong `docs/completed/CYCLE-2026-11-13.md`).
