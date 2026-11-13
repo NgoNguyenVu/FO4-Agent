@@ -1,7 +1,9 @@
 const path = require("node:path");
 const { runAgent } = require("./features/controller");
+const { config } = require("./features/config");
 const { dataDir, log, logError } = require("./features/agent-log");
 const { getLifecycle } = require("./lib/lifecycle");
+const { createWorkerRegistry } = require("./lib/worker-registry");
 
 // `runAgent()` chạy vòng điều khiển nội bộ (main) và tự xử lý mọi lỗi có thể
 // phục hồi (E006, mất session, timeout...) ngay trong vòng lặp của nó. Vì vậy nó
@@ -13,7 +15,7 @@ const MAX_STARTUP_RETRIES = 3;
 const lifecycle = getLifecycle({
   log: (message) => log(message),
   logError: (message) => logError(message),
-  // Heartbeat nằm ngoài repo để `git status` vẫn sạch.
+  // Heartbeat/state nằm ngoài repo để `git status` vẫn sạch.
   heartbeatPath: path.join(dataDir, "state", "heartbeat.json")
 });
 lifecycle.installSignalHandlers();
@@ -25,7 +27,47 @@ lifecycle.startHeartbeat({
   activeWorkerId: null
 });
 
+const registry = createWorkerRegistry({
+  statePath: path.join(dataDir, "state", "workers.json"),
+  lockPath: path.join(dataDir, "state", "agent.lock"),
+  leaseMs: (config.worker?.leaseSeconds || 60) * 1_000,
+  log: (message) => log(message),
+  logError: (message) => logError(message)
+});
+let lockHeartbeatTimer = null;
+
+function startProcessLockHeartbeat() {
+  if (lockHeartbeatTimer) return;
+  const intervalMs = (config.worker?.heartbeatSeconds || 20) * 1_000;
+  lockHeartbeatTimer = setInterval(() => {
+    registry.heartbeatProcessLock();
+  }, intervalMs);
+  if (typeof lockHeartbeatTimer.unref === "function") lockHeartbeatTimer.unref();
+}
+
+function stopProcessLockHeartbeat() {
+  if (!lockHeartbeatTimer) return;
+  clearInterval(lockHeartbeatTimer);
+  lockHeartbeatTimer = null;
+}
+
 async function main() {
+  try {
+    registry.acquireProcessLock();
+  } catch (error) {
+    logError(`Không khởi động được agent: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
+  startProcessLockHeartbeat();
+  lifecycle.register({
+    name: "process-lock",
+    onShutdown: () => {
+      stopProcessLockHeartbeat();
+      registry.releaseProcessLock();
+    }
+  });
+
   for (let attempt = 0; attempt <= MAX_STARTUP_RETRIES; attempt += 1) {
     try {
       await runAgent();

@@ -24,12 +24,18 @@ const config = {
     targetCheckIntervalSeconds: 120,
     ...(rawConfig.upgrade || {})
   },
+  // Process lock + worker registry (TASK-005). State ghi ngoài repo ở
+  // <LOCALAPPDATA>/FO4PurchaseAgent/state/; đường dẫn do agent.js quyết định.
+  worker: {
+    leaseSeconds: 60,
+    heartbeatSeconds: 20,
+    ...(rawConfig.worker || {})
+  },
   // Lượt ICON: chọn ngẫu nhiên 1 cầu thủ yêu thích, mua +1/1 rồi chuyển sang
   // mua phôi và nâng cấp.
   iconBuy: {
     // Mỗi lượt gửi tối đa 3 mã (giới hạn của bot).
-    maxPlayersPerBatch: 3,
-    grade: 1,
+    maxPlayersPerBatch: 3,    grade: 1,
     quantity: 1,
     cancelPositionAbove: 3,
     menuTimeoutSeconds: 45,
@@ -176,10 +182,22 @@ function validateIconBuyConfig() {
   }
 }
 
+function validateWorkerConfig() {
+  const w = config.worker || {};
+  requirePositiveInteger(w.leaseSeconds, "worker.leaseSeconds");
+  requirePositiveInteger(w.heartbeatSeconds, "worker.heartbeatSeconds");
+  if (w.heartbeatSeconds >= w.leaseSeconds) {
+    throw new Error(
+      "Cấu hình worker.heartbeatSeconds phải nhỏ hơn worker.leaseSeconds để lease không hết hạn giữa hai nhịp."
+    );
+  }
+}
+
 function validateConfig() {
   validateBuyConfig();
   validateUpgradeConfig();
   validateIconBuyConfig();
+  validateWorkerConfig();
 }
 
 module.exports = {
@@ -188,5 +206,6 @@ module.exports = {
   validateBuyConfig,
   validateUpgradeConfig,
   validateIconBuyConfig,
+  validateWorkerConfig,
   validateConfig
 };
