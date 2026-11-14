@@ -1,17 +1,29 @@
 # Current Queue
 
-- **Cập nhật:** 2026-11-14 (Autonomous Project Audit & Continuous Improvement Cycle v2 — đóng cycle)
-- **Branch làm việc:** `ai/auto-cycle-v2` — **không đụng `main`**
-- **Sprint:** Reliability + Concurrency (Stage B)
-- **Company Status:** **CYCLE v2 COMPLETE** — TASK-005B và TASK-004B đều DONE, Reviewer APPROVED + QA PASS, Quality Gate B/A
-- **Active Task:** _(không có — cycle đóng 2 task; task tiếp theo xem §1)_
-- **Current Focus:** Owner Decision cho TASK-003 Stage B; follow-up CLI resolve worker và integration Playwright
-- **Repo:** branch `ai/auto-cycle-v2` tách từ `main` `4cf7fb8`; push nhánh phụ để tạo PR, **không push `main`**
+- **Cập nhật:** 2026-11-14 (Autonomous Project Audit & Continuous Improvement Cycle v3 — đóng cycle)
+- **Branch làm việc:** `ai/auto-cycle-v3` — **không đụng `main`**
+- **Sprint:** Security closure + Operations
+- **Company Status:** **CYCLE v3 COMPLETE** — 3 task DONE (TASK-044, TASK-032, TASK-001); TASK-039 `AUTHORIZATION_REQUIRED`; TASK-045 `BLOCKED`
+- **Active Task:** _(không có — cycle đóng 3 task; task tiếp theo xem §1)_
+- **Current Focus:** Owner Decision cho TASK-003 Stage B và `purchaseTimeoutSeconds` (TASK-039); unblock TASK-045
+- **Repo:** branch `ai/auto-cycle-v3` tách từ `main` `de891cb`; push nhánh phụ để tạo PR, **không push `main`**
 - **Freeze:** Không merge/release/live. Commit chỉ trên nhánh cycle.
 - **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed, lịch sử cũ).
-- **Residual risk:** `npm test` **288/288** trên nhánh cycle. TASK-003 vẫn ở Stage A (chưa enforcement) — cần Owner Decision trước khi bật cap.
+- **Residual risk:** `npm test` **302/302** trên nhánh cycle. TASK-003 vẫn ở Stage A (chưa enforcement); `purchaseTimeoutSeconds = 0` đang chờ Owner.
 
-## 0. Cycle 2026-11-13 v2 — Stage B (COMPLETE)
+## 0. Cycle 2026-11-14 v3 — Security closure + Operations (COMPLETE)
+
+| Task | Nội dung | Trạng thái | Gate | Record |
+|---|---|---|---|---|
+| `TASK-044` | CLI `resolve-worker` cho worker `unknown`, chặn khi agent còn sống | **DONE** (`fbc3a43`) | A (96/100) | [completed](completed/TASK-044-resolve-worker-cli.md) |
+| `TASK-032` | Đóng remediation TASK-001 + evidence (review/QA đã có từ 2026-11-04) | **DONE** | — | [completed](completed/TASK-032-close-remediation.md) |
+| `TASK-001` | Security cleanup — re-review + QA, đóng P0 | **DONE** | A (92/100) | [completed](completed/TASK-001-security-cleanup.md) |
+| `TASK-039` | ICON refactor — retro review/QA; cần Owner cho `purchaseTimeoutSeconds` | **AUTHORIZATION_REQUIRED** | C (chưa đóng) | [request](authorizations/authorization-request-2026-11-14-task-039.md) |
+| `TASK-045` | Integration test vòng buy + nhánh ICON rủi ro cao | **BLOCKED** | — | [task](tasks/TASK-045-buy-integration-test.md) |
+
+Tổng kết cycle: [`docs/completed/CYCLE-2026-11-14-v3.md`](completed/CYCLE-2026-11-14-v3.md).
+
+## 0b. Cycle 2026-11-13 v2 — Stage B (COMPLETE)
 
 | Task | Nội dung | Trạng thái | Gate | Record |
 |---|---|---|---|---|
@@ -24,20 +36,21 @@ Tổng kết cycle: [`docs/completed/CYCLE-2026-11-13-v2.md`](completed/CYCLE-20
 
 | Task | Priority | Bước kế tiếp |
 |---|---|---|
+| `TASK-043` | P1 | Test spawn 2 process thật cho process lock + race acquire/heartbeat (khả thi, không cần Owner) |
 | `TASK-003 Stage B` | P0 | Nối guard vào buy/icon/upgrade + đặt cap thật; **cần Owner Decision** (tham số tài chính) |
-| `TASK-039` — ICON continuous-buy + inventory gate | P0 | Review/QA phần code đã có trên `main`; cần authorization cho tham số tài chính trước khi commit |
-| `TASK-001` — Security cleanup | P0 | Reviewer re-review + QA pass; baseline `main` hiện 267/267 trên nhánh cycle |
 
 ## 2. Authorization required
 
 | Task | Lý do |
 |---|---|
 | `TASK-003 Stage B` | Thay đổi hành vi tài chính live (hard cap + live gate) |
-| `TASK-039` commit | Tham số `maxPriceBP`/`minRatio` vượt giá trị đã duyệt nếu chưa có Owner Decision |
+| `TASK-039` | `purchaseTimeoutSeconds = 0` (chờ vô hạn) lệch baseline TASK-007 `3600` — xem [request](authorizations/authorization-request-2026-11-14-task-039.md) |
 
 ## 3. Blocked
 
-_(không có task bị block)_
+| Task | Blocker | Unblock condition |
+|---|---|---|
+| `TASK-045` — Integration test vòng buy | Thiếu harness Playwright/Telegram test; phụ thuộc quyết định `purchaseTimeoutSeconds` | Có harness page/frame giả lập (hoặc tách controller nhận dependency) + môi trường Telegram test + TASK-039 có Owner Decision |
 
 ## 4. Done — 2026-11-13 (cycle v1)
 

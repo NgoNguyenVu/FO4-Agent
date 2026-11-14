@@ -2,7 +2,7 @@
 
 ## Thông tin
 
-- **Status:** **IN_PROGRESS** — code đã tồn tại trong working tree (chưa commit), đang Review + QA độc lập (2026-11-05)
+- **Status:** **AUTHORIZATION_REQUIRED** — Reviewer APPROVED (code) + QA PASS (2026-11-14, retro-review); chờ Owner quyết định `purchaseTimeoutSeconds = 0`. Xem [authorization request](../authorizations/authorization-request-2026-11-14-task-039.md), [review](../reviews/TASK-039-review-2026-11-14.md), [qa](../reviews/TASK-039-qa-2026-11-14.md).
 - **Authorization:** Owner APPROVED cho Review/QA; cần quyết định tài chính chính thức trước khi commit.
 - **Priority:** P0
 - **Risk:** High

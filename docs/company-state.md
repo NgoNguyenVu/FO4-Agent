@@ -1,25 +1,37 @@
 # Company State
 
-- **Cập nhật:** 2026-11-14 (Autonomous Project Audit & Continuous Improvement Cycle v2 — đóng cycle)
+- **Cập nhật:** 2026-11-14 (Autonomous Project Audit & Continuous Improvement Cycle v3 — đóng cycle)
 - **Người cập nhật:** Manager Agent (Engineering Director)
-- **Current Sprint:** Reliability + Concurrency — Stage B
-- **Branch:** `ai/auto-cycle-v2` (tách từ `main` `4cf7fb8`; push nhánh phụ để tạo PR, không đụng `main`)
-- **Company Delivery Status:** **2 task DONE (Stage B)** — TASK-005B (controller dùng registry) và TASK-004B (integration signal + runbook). Reviewer APPROVED + QA PASS, Quality Gate B/A.
-- **Active Cycle Status:** **CYCLE v2 COMPLETE** — `npm test` **288/288**; 2 commit trên nhánh cycle (`d976b6d`, `65c0426`).
-- **Current Task:** _(không có)_ — task khả thi tiếp theo: CLI resolve worker, integration Playwright cho buy; chờ Owner: TASK-003 Stage B.
-- **Task Status:** **DONE (Stage B)**
-- **Reviewer:** **APPROVED** — TASK-005B, TASK-004B (2026-11-13, cycle v2); TASK-004, TASK-005, TASK-003 (cycle v1)
-- **QA:** **PASS** — TASK-005B (284/284), TASK-004B (288/288) — 2026-11-13
+- **Current Sprint:** Security closure + Operations
+- **Branch:** `ai/auto-cycle-v3` (tách từ `main` `de891cb`; push nhánh phụ để tạo PR, không đụng `main`)
+- **Company Delivery Status:** **3 task DONE (cycle v3)** — TASK-044 (CLI resolve worker), TASK-032 (đóng remediation), TASK-001 (security cleanup). Reviewer APPROVED + QA PASS; Gate A/A/—.
+- **Active Cycle Status:** **CYCLE v3 COMPLETE** — `npm test` **302/302**; 1 commit code (`fbc3a43`) + 1 commit docs.
+- **Current Task:** _(không có)_ — chờ Owner: TASK-003 Stage B, TASK-039 `purchaseTimeoutSeconds`; task khả thi: TASK-043.
+- **Task Status:** **DONE (cycle v3)**
+- **Reviewer:** **APPROVED** — TASK-044, TASK-001 re-review, TASK-039 (code) — 2026-11-14
+- **QA:** **PASS** — TASK-044 (302/302), TASK-001 (302/302), TASK-039 (302/302, có điều kiện)
 - **Parallel Security Task:** TASK-025 — **ACCEPTED RISK APPROVED** (không có credential production)
-- **Blocked Task:** _(không còn)_
-- **Authorization Required:** TASK-003 Stage B (bật hard cap/live gate); TASK-039 commit (tham số tài chính)
-- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v2`)
+- **Blocked Task:** `TASK-045` — integration test vòng buy (thiếu harness Playwright/Telegram test)
+- **Authorization Required:** TASK-003 Stage B (hard cap/live gate); TASK-039 (`purchaseTimeoutSeconds = 0`)
+- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v3`)
 - **Push Allowed:** Chỉ nhánh `ai/*` (phục vụ PR); **không push `main`**
 - **Merge Allowed:** NO
 - **Live Run Allowed:** NO
 - **Security Risk Acceptance:** TASK-025 — **APPROVED**; TASK-026 — **APPROVED** (force push lịch sử cũ).
 
-## 0b. Cycle 2026-11-13 v2 — Stage B
+## 0b. Cycle 2026-11-14 v3 — Security closure + Operations
+
+| Task | Deliverable | Trạng thái | Gate |
+|---|---|---|---|
+| `TASK-044` | `scripts/resolve-worker.js` + 14 test; chặn resolve khi agent còn sống | **DONE** (`fbc3a43`) | A (96) |
+| `TASK-032` | Đóng remediation TASK-001 + evidence | **DONE** | — |
+| `TASK-001` | Security cleanup re-review + QA | **DONE** | A (92) |
+| `TASK-039` | Retro review/QA ICON; chờ Owner `purchaseTimeoutSeconds` | **AUTHORIZATION_REQUIRED** | C |
+| `TASK-045` | Integration test vòng buy + nhánh ICON rủi ro cao | **BLOCKED** | — |
+
+Chi tiết: [`docs/completed/CYCLE-2026-11-14-v3.md`](completed/CYCLE-2026-11-14-v3.md).
+
+## 0c. Cycle 2026-11-13 v2 — Stage B
 
 | Task | Deliverable | Trạng thái | Commit | Gate |
 |---|---|---|---|---|

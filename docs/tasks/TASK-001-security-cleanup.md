@@ -6,7 +6,7 @@
 - **Risk:** High
 - **Effort:** M
 - **Dependency:** TASK-007
-- **Status:** **REMEDIATION_COMPLETE (2026-11-04)** — B1–B9 closed; **not Done**: pending Reviewer re-review + QA; CI/fresh-clone green blocked by `TASK-007`
+- **Status:** **DONE (2026-11-14)** — Reviewer re-review **APPROVED** + QA **PASS** (2026-11-14); B1–B9 closed; `scan:history` 0 finding (local + fresh clone); CI `main` xanh. Xem [re-review](../reviews/TASK-001-rereview-2026-11-14.md), [qa](../reviews/TASK-001-qa-2026-11-14.md), [completed](../completed/TASK-001-security-cleanup.md).
 - **Owner đề xuất:** Security + Platform
 - **Review:** [`docs/reviews/TASK-001-review-2026-10-31.md`](../reviews/TASK-001-review-2026-10-31.md)
 - **Repo 2026-11-01:** local `main` tại `a4b7a25` sau rewrite; lịch sử local không còn `debug/trade-bulk.html`/ảnh debug; remote vẫn chứa artifact cho đến `TASK-026`. Patch TASK-001 staged **7 file**.
