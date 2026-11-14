@@ -1,6 +1,6 @@
 # Roadmap — FO4-Agent
 
-- **Cập nhật:** 2026-11-14 (cycle v3 — đóng TASK-001/TASK-032, thêm TASK-044; xem `docs/completed/CYCLE-2026-11-14-v3.md`)
+- **Cập nhật:** 2026-11-14 (cycle v3 — đóng TASK-001/TASK-032/TASK-043/TASK-044; xem `docs/completed/CYCLE-2026-11-14-v3.md`)
 - **Người lập:** Architect Agent; cập nhật bởi Manager Agent
 - **Nguồn dữ liệu:** `docs/backlog.md` + Cortex MCP (`cortex_code_search`, `cortex_code_context`, `cortex_detect_changes`, `cortex_code_impact`).
 - **Trạng thái:** Roadmap đề xuất, chưa cam kết ngày cứng. Thời lượng là ước tính cho một team nhỏ.
@@ -9,7 +9,7 @@
 
 ### 0.1. Cycle v3 — Security closure + Operations (2026-11-14)
 
-- **Đã xong:** TASK-044 (CLI resolve worker, `fbc3a43`, Gate A), TASK-032 (đóng remediation), TASK-001 (security cleanup re-review + QA, Gate A). `npm test` **302/302**.
+- **Đã xong:** TASK-044 (CLI resolve worker, `fbc3a43`, Gate A), TASK-043 (integration test process lock với 2 process thật, Gate A), TASK-032 (đóng remediation), TASK-001 (security cleanup re-review + QA, Gate A). `npm test` **306/306**.
 - **Chờ Owner:** TASK-003 Stage B (hard cap/live gate); TASK-039 `purchaseTimeoutSeconds = 0`.
 - **Blocked:** TASK-045 — cần harness Playwright/Telegram test và quyết định timeout.
 - **Điều kiện:** không merge/push `main`; cycle v3 chỉ push `ai/auto-cycle-v3` để tạo PR.

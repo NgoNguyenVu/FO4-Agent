@@ -1,10 +1,11 @@
 # Backlog CTO — FO4-Agent
 
-- **Cập nhật:** 2026-11-14 (cycle v3 — đóng TASK-001/TASK-032, thêm TASK-044; xem `docs/completed/CYCLE-2026-11-14-v3.md`)
+- **Cập nhật:** 2026-11-14 (cycle v3 — đóng TASK-001/TASK-032/TASK-043/TASK-044; xem `docs/completed/CYCLE-2026-11-14-v3.md`)
 - **Thay đổi cycle 2026-11-14 v3:**
   - `TASK-001` P0 Security → **DONE** (2026-11-14): re-review APPROVED + QA PASS; `scan:history` 0 finding, fresh clone sạch, CI `main` xanh.
   - `TASK-032` P2 → **DONE**: evidence B1–B9 + sign-off 2026-11-04; đóng sau khi TASK-001 hoàn tất.
   - `TASK-044` P1 → **DONE** (`fbc3a43`): CLI `resolve-worker` cho worker `unknown`, chặn khi agent còn sống; 14 test. Gate A (96/100).
+  - `TASK-043` P1 → **DONE**: integration test process lock với 2 process thật (đua lock, stale takeover, heartbeat/release). Gate A (94/100).
   - `TASK-039` P0 → **AUTHORIZATION_REQUIRED**: code APPROVED + QA PASS (retro), nhưng `purchaseTimeoutSeconds = 0` cần Owner quyết định.
   - `TASK-045` P1 → **BLOCKED**: integration test vòng buy cần harness Playwright/Telegram test.
 - **Thay đổi cycle 2026-11-13 v2:**
@@ -16,7 +17,6 @@
   - `TASK-003` P0 Financial → **DONE Stage A** (`767323f`), **chưa enforcement**.
 - **Follow-up mới (đề xuất):**
   - `TASK-040` (P0, cần Owner): TASK-003 Stage B — đặt cap thật + nối guard vào buy/icon/upgrade + reconcile reservation.
-  - `TASK-043` (P1): test spawn 2 process thật cho process lock; test race acquire/heartbeat.
   - `TASK-045` (P1, BLOCKED): integration test vòng buy + nhánh ICON rủi ro cao (`monitorExistingOrders`, `captureStopBaselineWithRetry`, deadline vô hạn).
 
 - **Cập nhật:** 2026-11-04 (TASK-032 evidence — B1–B9 closed; TASK-001 REMEDIATION_COMPLETE, chờ re-review + QA; TASK-007 AUTHORIZATION_REQUIRED)

@@ -4,8 +4,8 @@
 - **Người cập nhật:** Manager Agent (Engineering Director)
 - **Current Sprint:** Security closure + Operations
 - **Branch:** `ai/auto-cycle-v3` (tách từ `main` `de891cb`; push nhánh phụ để tạo PR, không đụng `main`)
-- **Company Delivery Status:** **3 task DONE (cycle v3)** — TASK-044 (CLI resolve worker), TASK-032 (đóng remediation), TASK-001 (security cleanup). Reviewer APPROVED + QA PASS; Gate A/A/—.
-- **Active Cycle Status:** **CYCLE v3 COMPLETE** — `npm test` **302/302**; 1 commit code (`fbc3a43`) + 1 commit docs.
+- **Company Delivery Status:** **4 task DONE (cycle v3)** — TASK-044 (CLI resolve worker), TASK-043 (process lock integration), TASK-032 (đóng remediation), TASK-001 (security cleanup). Reviewer APPROVED + QA PASS; Gate A/A/A/—.
+- **Active Cycle Status:** **CYCLE v3 COMPLETE** — `npm test` **306/306**; 2 commit code (`fbc3a43`, + test TASK-043) + 1 commit docs.
 - **Current Task:** _(không có)_ — chờ Owner: TASK-003 Stage B, TASK-039 `purchaseTimeoutSeconds`; task khả thi: TASK-043.
 - **Task Status:** **DONE (cycle v3)**
 - **Reviewer:** **APPROVED** — TASK-044, TASK-001 re-review, TASK-039 (code) — 2026-11-14
@@ -24,6 +24,7 @@
 | Task | Deliverable | Trạng thái | Gate |
 |---|---|---|---|
 | `TASK-044` | `scripts/resolve-worker.js` + 14 test; chặn resolve khi agent còn sống | **DONE** (`fbc3a43`) | A (96) |
+| `TASK-043` | Integration test process lock với 2 process thật | **DONE** | A (94) |
 | `TASK-032` | Đóng remediation TASK-001 + evidence | **DONE** | — |
 | `TASK-001` | Security cleanup re-review + QA | **DONE** | A (92) |
 | `TASK-039` | Retro review/QA ICON; chờ Owner `purchaseTimeoutSeconds` | **AUTHORIZATION_REQUIRED** | C |
