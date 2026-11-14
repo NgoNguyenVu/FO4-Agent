@@ -3,7 +3,7 @@ const { runAgent } = require("./features/controller");
 const { config } = require("./features/config");
 const { dataDir, log, logError } = require("./features/agent-log");
 const { getLifecycle } = require("./lib/lifecycle");
-const { createWorkerRegistry } = require("./lib/worker-registry");
+const { getWorkerRegistry } = require("./lib/worker-registry");
 
 // `runAgent()` chạy vòng điều khiển nội bộ (main) và tự xử lý mọi lỗi có thể
 // phục hồi (E006, mất session, timeout...) ngay trong vòng lặp của nó. Vì vậy nó
@@ -27,7 +27,7 @@ lifecycle.startHeartbeat({
   activeWorkerId: null
 });
 
-const registry = createWorkerRegistry({
+const registry = getWorkerRegistry({
   statePath: path.join(dataDir, "state", "workers.json"),
   lockPath: path.join(dataDir, "state", "agent.lock"),
   leaseMs: (config.worker?.leaseSeconds || 60) * 1_000,

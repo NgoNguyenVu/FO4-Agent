@@ -1,33 +1,30 @@
 # Current Queue
 
-- **Cập nhật:** 2026-11-13 (Autonomous Project Audit & Continuous Improvement Cycle v1)
-- **Branch làm việc:** `ai/auto-cycle-v1` — **không đụng `main`**
-- **Sprint:** Reliability + Financial integrity (Stage A)
-- **Company Status:** **IN_PROGRESS** — 3 task P0 hoàn thành trong cycle này (TASK-004, TASK-005, TASK-003 Stage A), đều Reviewer APPROVED + QA PASS + Quality Gate ≥ B
-- **Active Task:** _(không có — cycle đóng 3 task; task tiếp theo xem §1)_
-- **Current Focus:** Review các Stage B cần Owner Decision (spend cap enforcement), TASK-039, TASK-001 re-review
-- **Repo:** branch `ai/auto-cycle-v1`; `main` giữ nguyên `75bea29`. Không merge, không push trong cycle này.
+- **Cập nhật:** 2026-11-14 (Autonomous Project Audit & Continuous Improvement Cycle v2 — đóng cycle)
+- **Branch làm việc:** `ai/auto-cycle-v2` — **không đụng `main`**
+- **Sprint:** Reliability + Concurrency (Stage B)
+- **Company Status:** **CYCLE v2 COMPLETE** — TASK-005B và TASK-004B đều DONE, Reviewer APPROVED + QA PASS, Quality Gate B/A
+- **Active Task:** _(không có — cycle đóng 2 task; task tiếp theo xem §1)_
+- **Current Focus:** Owner Decision cho TASK-003 Stage B; follow-up CLI resolve worker và integration Playwright
+- **Repo:** branch `ai/auto-cycle-v2` tách từ `main` `4cf7fb8`; push nhánh phụ để tạo PR, **không push `main`**
 - **Freeze:** Không merge/release/live. Commit chỉ trên nhánh cycle.
 - **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed, lịch sử cũ).
-- **Residual risk:** `npm run check` = **267/267** trên nhánh cycle. TASK-003 mới ở Stage A (chưa enforcement) — cần Owner Decision trước khi bật cap.
+- **Residual risk:** `npm test` **288/288** trên nhánh cycle. TASK-003 vẫn ở Stage A (chưa enforcement) — cần Owner Decision trước khi bật cap.
 
-## 0. Cycle 2026-11-13 — kết quả
+## 0. Cycle 2026-11-13 v2 — Stage B (COMPLETE)
 
-| Task | Nội dung | Trạng thái | Quality Gate | Record |
+| Task | Nội dung | Trạng thái | Gate | Record |
 |---|---|---|---|---|
-| `TASK-004` | Graceful shutdown + lifecycle + heartbeat | **DONE (Stage A)** | B (83/100) | [`completed/TASK-004`](completed/TASK-004-graceful-shutdown.md) · [`review`](reviews/TASK-004-review-2026-11-13.md) · [`qa`](reviews/TASK-004-qa-2026-11-13.md) |
-| `TASK-005` | Process lock + worker registry/lease | **DONE (Stage A)** | B (84/100) | [`completed/TASK-005`](completed/TASK-005-worker-state-lock.md) · [`review`](reviews/TASK-005-review-2026-11-13.md) · [`qa`](reviews/TASK-005-qa-2026-11-13.md) |
-| `TASK-003` | Spend guard + spend limit config | **DONE (Stage A)** | A (90/100) | [`completed/TASK-003`](completed/TASK-003-financial-hard-caps.md) · [`review`](reviews/TASK-003-review-2026-11-13.md) · [`qa`](reviews/TASK-003-qa-2026-11-13.md) |
+| `TASK-005B` | Controller dùng `registry.reconcile()` làm source of truth; đăng ký worker buy/upgrade/icon | **DONE** (`d976b6d`) | B (82/100) | [completed](completed/TASK-005B-controller-registry-integration.md) |
+| `TASK-004B` | Integration test SIGINT/SIGTERM process thật + README runbook | **DONE** (`65c0426`) | A (93/100) | [completed](completed/TASK-004B-signal-integration-runbook.md) |
 
-Tổng kết cycle: [`docs/completed/CYCLE-2026-11-13.md`](completed/CYCLE-2026-11-13.md).
+Tổng kết cycle: [`docs/completed/CYCLE-2026-11-13-v2.md`](completed/CYCLE-2026-11-13-v2.md).
 
 ## 1. Ready — executable (ngoài cycle này)
 
 | Task | Priority | Bước kế tiếp |
 |---|---|---|
 | `TASK-003 Stage B` | P0 | Nối guard vào buy/icon/upgrade + đặt cap thật; **cần Owner Decision** (tham số tài chính) |
-| `TASK-005 Stage B` | P0 | Controller dùng `registry.reconcile()` làm source of truth; đăng ký worker buy/upgrade/icon |
-| `TASK-004 Stage B` | P1 | Integration test SIGINT/SIGTERM thật + README runbook |
 | `TASK-039` — ICON continuous-buy + inventory gate | P0 | Review/QA phần code đã có trên `main`; cần authorization cho tham số tài chính trước khi commit |
 | `TASK-001` — Security cleanup | P0 | Reviewer re-review + QA pass; baseline `main` hiện 267/267 trên nhánh cycle |
 

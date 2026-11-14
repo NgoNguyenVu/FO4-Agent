@@ -6,7 +6,7 @@
 - **Risk:** High
 - **Effort:** M
 - **Dependency:** TASK-007
-- **Status:** **DONE (Stage A)** — 2026-11-13, branch `ai/auto-cycle-v1`; Reviewer APPROVED + QA PASS; Quality Gate B (83/100). Xem [completed/TASK-004-graceful-shutdown.md](../completed/TASK-004-graceful-shutdown.md). Stage B (integration signal test + ownership registry) chuyển backlog.
+- **Status:** **DONE (Stage A + Stage B)** — Stage A 2026-11-13 (`3b864e7`); Stage B 2026-11-13 trên `ai/auto-cycle-v2` — integration test process-level SIGINT/SIGTERM + README runbook. Reviewer APPROVED + QA PASS; Gate B (83/100 Stage A), A (93/100 Stage B). Xem [completed/TASK-004-graceful-shutdown.md](../completed/TASK-004-graceful-shutdown.md) và [completed/TASK-004B-signal-integration-runbook.md](../completed/TASK-004B-signal-integration-runbook.md).
 - **Owner đề xuất:** Platform / Reliability
 
 ## 1. Mục tiêu
