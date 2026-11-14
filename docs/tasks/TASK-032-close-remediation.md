@@ -7,7 +7,7 @@
 - **Effort:** S
 - **Dependency:** TASK-024 → TASK-031
 - **Blocks:** —
-- **Status:** **REVIEW** — evidence/docs cập nhật 2026-11-04; chờ Reviewer/QA xác nhận. Không đánh dấu TASK-001 Done.
+- **Status:** **DONE** — evidence/docs cập nhật 2026-11-04; Reviewer **APPROVED** + QA **PASS** (2026-11-04). Đóng chính thức 2026-11-14 sau khi TASK-001 re-review hoàn tất (điều kiện DoD cuối cùng).
 - **Owner đề xuất:** Engineering Manager + Security
 
 ## 1. Mục tiêu

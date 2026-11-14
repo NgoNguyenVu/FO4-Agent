@@ -1,23 +1,27 @@
 # Roadmap — FO4-Agent
 
-- **Cập nhật:** 2026-11-14 (cycle v2 — Stage B xong cho TASK-005/004; xem `docs/completed/CYCLE-2026-11-13-v2.md`)
+- **Cập nhật:** 2026-11-14 (cycle v3 — đóng TASK-001/TASK-032/TASK-043/TASK-044; xem `docs/completed/CYCLE-2026-11-14-v3.md`)
 - **Người lập:** Architect Agent; cập nhật bởi Manager Agent
 - **Nguồn dữ liệu:** `docs/backlog.md` + Cortex MCP (`cortex_code_search`, `cortex_code_context`, `cortex_detect_changes`, `cortex_code_impact`).
 - **Trạng thái:** Roadmap đề xuất, chưa cam kết ngày cứng. Thời lượng là ước tính cho một team nhỏ.
 
-## 0. Cập nhật cycle 2026-11-13
+## 0. Cập nhật cycle 2026-11-14
 
-### 0.1. Cycle v2 — Stage B (2026-11-13 → 2026-11-14)
+### 0.1. Cycle v3 — Security closure + Operations (2026-11-14)
 
-- **Đã xong:** TASK-005 Stage B (controller dùng registry làm source of truth, `d976b6d`, Gate B) và TASK-004 Stage B (integration test process-level + runbook, `65c0426`, Gate A). `npm test` **288/288**.
-- **Mốc tiếp theo:** TASK-003 Stage B (Owner Decision) → TASK-039/TASK-001 đóng → CLI resolve worker + integration Playwright cho buy.
-- **Điều kiện:** không merge/push `main` cho tới khi TASK-001 + TASK-039 hoàn tất review/QA và có authorization tài chính. Cycle v2 chỉ push nhánh `ai/auto-cycle-v2` để tạo PR.
+- **Đã xong:** TASK-044 (CLI resolve worker, `fbc3a43`, Gate A), TASK-043 (integration test process lock với 2 process thật, Gate A), TASK-032 (đóng remediation), TASK-001 (security cleanup re-review + QA, Gate A). `npm test` **306/306**.
+- **Chờ Owner:** TASK-003 Stage B (hard cap/live gate); TASK-039 `purchaseTimeoutSeconds = 0`.
+- **Blocked:** TASK-045 — cần harness Playwright/Telegram test và quyết định timeout.
+- **Điều kiện:** không merge/push `main`; cycle v3 chỉ push `ai/auto-cycle-v3` để tạo PR.
 
-### 0.2. Cycle v1 — Stage A (2026-11-13)
+### 0.2. Cycle v2 — Stage B (2026-11-13 → 2026-11-14)
 
-- **Đã xong (Stage A):** TASK-004 (lifecycle/shutdown/heartbeat), TASK-005 (process lock + worker registry), TASK-003 (spend guard + config, chưa enforcement).
-- **Mốc tiếp theo:** TASK-003 Stage B (Owner Decision) → TASK-005 Stage B (controller dùng registry) → TASK-004 Stage B (integration test) → TASK-039/TASK-001 đóng.
-- **Điều kiện:** không merge/push `main` cho tới khi TASK-001 + TASK-039 hoàn tất review/QA và có authorization tài chính.
+- **Đã xong:** TASK-005 Stage B (controller dùng registry, `d976b6d`, Gate B) và TASK-004 Stage B (integration test process-level + runbook, `65c0426`, Gate A). `npm test` **288/288**.
+- **Điều kiện:** không merge/push `main`; cycle v2 chỉ push `ai/auto-cycle-v2` để tạo PR.
+
+### 0.3. Cycle v1 — Stage A (2026-11-13)
+
+- **Đã xong:** TASK-004 (lifecycle/shutdown/heartbeat), TASK-005 (process lock + worker registry), TASK-003 (spend guard + config, chưa enforcement).
 
 ## 1. Architecture snapshot
 

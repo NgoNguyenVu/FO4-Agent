@@ -68,13 +68,17 @@ con nguoi xac nhan. Xay ra khi agent crash/restart ma registry con worker
 
 1. Dung agent (Ctrl+C) va mo Telegram kiem tra bang `/stop`: chac chan khong con
    worker nao dang chay.
-2. Xoa state worker (giu lai file de doi chieu neu can):
+2. Liet ke worker va resolve (CLI se tu choi neu agent con song):
+   ```powershell
+   npm.cmd run worker:resolve
+   npm.cmd run worker:resolve -- --resolve <workerId>
+   # hoac resolve tat ca worker unknown:
+   npm.cmd run worker:resolve -- --resolve-all
+   ```
+   Them `--note "..."` de luu ly do, `--json` de lay ket qua cho script.
+   Neu muon xoa han state worker (giu lai file de doi chieu neu can):
    ```powershell
    Remove-Item "$env:LOCALAPPDATA\FO4PurchaseAgent\state\workers.json"
-   ```
-   Hoac resolve dung worker qua API registry:
-   ```powershell
-   node -e "const path=require('node:path');const {getWorkerRegistry}=require('./lib/worker-registry');const dir=path.join(process.env.LOCALAPPDATA,'FO4PurchaseAgent','state');const r=getWorkerRegistry({statePath:path.join(dir,'workers.json'),lockPath:path.join(dir,'agent.lock')});for(const w of r.getSnapshot().workers)if(w.state==='unknown')console.log(r.resolveUnknown(w.workerId,'operator-verified-stopped'));"
    ```
 3. Khoi dong lai agent va gui `/startagent`.
 
