@@ -1,24 +1,24 @@
 # Current Queue
 
-- **Cập nhật:** 2026-11-13 (Autonomous Project Audit & Continuous Improvement Cycle v2)
+- **Cập nhật:** 2026-11-14 (Autonomous Project Audit & Continuous Improvement Cycle v2 — đóng cycle)
 - **Branch làm việc:** `ai/auto-cycle-v2` — **không đụng `main`**
 - **Sprint:** Reliability + Concurrency (Stage B)
-- **Company Status:** **IN_PROGRESS — Cycle v2** — thực thi Stage B của TASK-005 (controller dùng registry) và TASK-004 (integration test signal + runbook)
-- **Active Task:** `TASK-005B` → `TASK-004B` (tuần tự, Manager → Executor → Coder → Reviewer → QA)
-- **Current Focus:** Đóng khoảng cách giữa registry (Stage A) và runtime controller; có bằng chứng process-level cho shutdown
+- **Company Status:** **CYCLE v2 COMPLETE** — TASK-005B và TASK-004B đều DONE, Reviewer APPROVED + QA PASS, Quality Gate B/A
+- **Active Task:** _(không có — cycle đóng 2 task; task tiếp theo xem §1)_
+- **Current Focus:** Owner Decision cho TASK-003 Stage B; follow-up CLI resolve worker và integration Playwright
 - **Repo:** branch `ai/auto-cycle-v2` tách từ `main` `4cf7fb8`; push nhánh phụ để tạo PR, **không push `main`**
 - **Freeze:** Không merge/release/live. Commit chỉ trên nhánh cycle.
 - **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed, lịch sử cũ).
-- **Residual risk:** `npm test` baseline **267/267**. TASK-003 vẫn ở Stage A (chưa enforcement) — cần Owner Decision trước khi bật cap.
+- **Residual risk:** `npm test` **288/288** trên nhánh cycle. TASK-003 vẫn ở Stage A (chưa enforcement) — cần Owner Decision trước khi bật cap.
 
-## 0. Cycle 2026-11-13 v2 — Stage B
+## 0. Cycle 2026-11-13 v2 — Stage B (COMPLETE)
 
-| Task | Nội dung | Trạng thái | Record |
-|---|---|---|---|
-| `TASK-005B` | Controller dùng `registry.reconcile()` làm source of truth; đăng ký worker buy/upgrade/icon | **IN_PROGRESS** | [task](tasks/TASK-005B-controller-registry-integration.md) |
-| `TASK-004B` | Integration test SIGINT/SIGTERM process thật + README runbook | **TODO** | [task](tasks/TASK-004B-signal-integration-runbook.md) |
+| Task | Nội dung | Trạng thái | Gate | Record |
+|---|---|---|---|---|
+| `TASK-005B` | Controller dùng `registry.reconcile()` làm source of truth; đăng ký worker buy/upgrade/icon | **DONE** (`d976b6d`) | B (82/100) | [completed](completed/TASK-005B-controller-registry-integration.md) |
+| `TASK-004B` | Integration test SIGINT/SIGTERM process thật + README runbook | **DONE** (`65c0426`) | A (93/100) | [completed](completed/TASK-004B-signal-integration-runbook.md) |
 
-Tổng kết cycle: [`docs/completed/CYCLE-2026-11-13-v2.md`](completed/CYCLE-2026-11-13-v2.md) (tạo khi đóng cycle).
+Tổng kết cycle: [`docs/completed/CYCLE-2026-11-13-v2.md`](completed/CYCLE-2026-11-13-v2.md).
 
 ## 1. Ready — executable (ngoài cycle này)
 

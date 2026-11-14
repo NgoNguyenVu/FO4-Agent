@@ -1,15 +1,15 @@
 # Company State
 
-- **Cập nhật:** 2026-11-13 (Autonomous Project Audit & Continuous Improvement Cycle v2)
+- **Cập nhật:** 2026-11-14 (Autonomous Project Audit & Continuous Improvement Cycle v2 — đóng cycle)
 - **Người cập nhật:** Manager Agent (Engineering Director)
 - **Current Sprint:** Reliability + Concurrency — Stage B
 - **Branch:** `ai/auto-cycle-v2` (tách từ `main` `4cf7fb8`; push nhánh phụ để tạo PR, không đụng `main`)
-- **Company Delivery Status:** **IN_PROGRESS — Cycle v2** — TASK-005B (controller dùng registry) và TASK-004B (integration signal + runbook).
-- **Active Cycle Status:** **CYCLE v2 RUNNING** — baseline `npm test` **267/267**.
-- **Current Task:** `TASK-005B` — **IN_PROGRESS**; kế tiếp `TASK-004B`.
-- **Task Status:** **IN_PROGRESS**
-- **Reviewer:** **APPROVED** — TASK-004, TASK-005, TASK-003 (2026-11-13, cycle v1)
-- **QA:** **PASS** — TASK-004 (244/244), TASK-005 (254/254), TASK-003 (267/267) — 2026-11-13
+- **Company Delivery Status:** **2 task DONE (Stage B)** — TASK-005B (controller dùng registry) và TASK-004B (integration signal + runbook). Reviewer APPROVED + QA PASS, Quality Gate B/A.
+- **Active Cycle Status:** **CYCLE v2 COMPLETE** — `npm test` **288/288**; 2 commit trên nhánh cycle (`d976b6d`, `65c0426`).
+- **Current Task:** _(không có)_ — task khả thi tiếp theo: CLI resolve worker, integration Playwright cho buy; chờ Owner: TASK-003 Stage B.
+- **Task Status:** **DONE (Stage B)**
+- **Reviewer:** **APPROVED** — TASK-005B, TASK-004B (2026-11-13, cycle v2); TASK-004, TASK-005, TASK-003 (cycle v1)
+- **QA:** **PASS** — TASK-005B (284/284), TASK-004B (288/288) — 2026-11-13
 - **Parallel Security Task:** TASK-025 — **ACCEPTED RISK APPROVED** (không có credential production)
 - **Blocked Task:** _(không còn)_
 - **Authorization Required:** TASK-003 Stage B (bật hard cap/live gate); TASK-039 commit (tham số tài chính)
@@ -21,10 +21,12 @@
 
 ## 0b. Cycle 2026-11-13 v2 — Stage B
 
-| Task | Deliverable | Trạng thái |
-|---|---|---|
-| `TASK-005B` | Shared registry + `lib/worker-session.js`; controller reconcile/đăng ký worker buy–upgrade–icon | IN_PROGRESS |
-| `TASK-004B` | Integration test process-level SIGINT/SIGTERM + README runbook | TODO |
+| Task | Deliverable | Trạng thái | Commit | Gate |
+|---|---|---|---|---|
+| `TASK-005B` | Shared registry + `lib/worker-session.js`; controller reconcile/đăng ký worker buy–upgrade–icon | **DONE** | `d976b6d` | B (82) |
+| `TASK-004B` | Integration test process-level SIGINT/SIGTERM + README runbook | **DONE** | `65c0426` | A (93) |
+
+Chi tiết: [`docs/completed/CYCLE-2026-11-13-v2.md`](completed/CYCLE-2026-11-13-v2.md).
 
 ## 0. Cycle 2026-11-13 v1 — tóm tắt
 
