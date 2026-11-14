@@ -9,7 +9,8 @@
     "test": "node --test",
     "scan:secrets": "node scripts/check-secrets.js",
     "scan:history": "node scripts/check-secrets.js --history",
-    "scan:staged": "node scripts/check-secrets.js --staged"
+    "scan:staged": "node scripts/check-secrets.js --staged",
+    "worker:resolve": "node scripts/resolve-worker.js"
   },
   "dependencies": {
     "playwright": "^1.56.1"
