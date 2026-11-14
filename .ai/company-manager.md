@@ -84,8 +84,10 @@ Nếu task không thể thực thi vì thiếu dependency, thiếu prerequisite 
 
 ### 10. Thực thi `COMMIT_AUTHORIZED`
 Khi task ở trạng thái `COMMIT_AUTHORIZED`:
-- Bạn được phép thực thi lệnh `git add` (chỉ các file thuộc task) và `git commit` sử dụng `PROPOSED COMMIT MESSAGE` đã được duyệt.
-- **Tuyệt đối KHÔNG được:** Merge nhánh chính, tạo Release, hoặc deploy Live.
+- Kiểm tra nhánh Git hiện tại: nếu đang ở `main`, bắt buộc tạo/chuyển sang nhánh `ai/auto-cycle-v<X>` trước khi commit.
+- Thực thi lệnh `git add` (chỉ các file thuộc task) và `git commit` sử dụng `PROPOSED COMMIT MESSAGE` đã được duyệt.
+- **ĐƯỢC PHÉP:** Chạy `git push -u origin ai/auto-cycle-v<X>` để đẩy nhánh phụ lên GitHub kích hoạt CI sau khi `npm test` và `npm run scan:secrets` pass 100%.
+- **Tuyệt đối KHÔNG được:** Push trực tiếp vào `main`, Merge nhánh chính, tạo Release, hoặc deploy Live.
 - Sau khi `git commit` thành công: Chuyển trạng thái `COMMIT_AUTHORIZED` ↓ `DONE`.
 
 ### 11. Xử lý khi task `DONE`

@@ -61,7 +61,8 @@ Một task CHỈ yêu cầu Owner Decision khi chạm vào ít nhất một tron
 - risk acceptance (chấp nhận rủi ro bảo mật hoặc kiến trúc đã biết)
 - credential decision / secret rotation
 - security sign-off (thay đổi cơ chế auth, phân quyền, mã hóa)
-- breaking change hoặc yêu cầu owner approval 명시 trong task
+- breaking change hoặc yêu cầu owner approval trong task
+- push hoặc merge trực tiếp vào nhánh `main` (mọi thay đổi của AI bắt buộc nằm trên nhánh `ai/*`)
 
 Owner Decision hợp lệ khi tồn tại `docs/authorizations/*.md` hoặc `docs/risk-acceptance*.md` ghi rõ `APPROVED`, `AUTHORIZED`, hoặc `ACCEPTED RISK` cho đúng Task ID đó.
 
@@ -132,12 +133,13 @@ Nếu một task thuộc remediation chain, đã đạt `Reviewer APPROVED` + `Q
 Cho phép chuyển `READY_FOR_COMMIT` ↓ `COMMIT_AUTHORIZED` ↓ `DONE` ngay lập tức mà không bị chặn bởi các cổng phụ thuộc vào chính task đó.
 
 #### 5. Nếu task = `COMMIT_AUTHORIZED`
+- Kiểm tra nhánh Git hiện tại: nếu đang ở `main`, bắt buộc tạo và chuyển sang nhánh mới theo chuẩn `ai/auto-cycle-v<X>` (tách từ `main` mới nhất) trước khi commit.
 - Giao `Company Manager` thực thi lệnh `git commit` với commit message chuẩn (chỉ commit các file thuộc phạm vi task).
-- **KHÔNG được:** Merge, Release, hoặc đẩy lên môi trường Live.
+- **KHÔNG được:** Push trực tiếp vào `main`, Merge vào `main`, Release, hoặc đẩy lên môi trường Live.
+- **ĐƯỢC PHÉP:** Push nhánh phụ `ai/auto-cycle-v<X>` lên remote (`git push -u origin ai/auto-cycle-v<X>`) sau khi `npm test` và `npm run scan:secrets` pass 100% để kích hoạt GitHub Actions CI và chờ Owner mở/merge Pull Request.
 - Sau khi commit thành công:
   `COMMIT_AUTHORIZED` ↓ `DONE`.
   `Company Manager` di chuyển task vào `docs/completed/`, cập nhật `queue`, `roadmap`, `backlog`, `company-state` và chọn task tiếp theo.
-
 ---
 
 ## Governance Deadlock
@@ -151,11 +153,16 @@ Chỉ được dừng toàn bộ hệ thống khi **đồng thời** thỏa mãn
 1. Không còn task nào ở `COMMIT_AUTHORIZED`, `READY_FOR_COMMIT`, `IN_PROGRESS`, hoặc `READY`.
 2. Đã chạy `Company Cycle` kiểm tra nhưng không phát hiện thêm task mới nào có thể đưa vào `READY`.
 3. Không còn hành động governance nào có thể tự động thực hiện.
+Khi chạm `STOP CONDITION`:
+- Chạy `git push -u origin ai/auto-cycle-v<X>` (nếu có commit mới chưa push).
+- Gọi `cortex_memory_store` lưu tóm tắt kết quả cycle (dùng slug `f04-agent`) và gọi `cortex_session_end` để đóng phiên sạch sẽ.
 
 ## Quy tắc an toàn
 - Không được Merge, Release, Live nếu chưa có lệnh rõ ràng.
 - Không được Rewrite History hoặc Rotate Credential trừ khi task tương ứng cho phép và đã có Owner Decision hợp lệ.
 - Commit chỉ được thực hiện khi `task = COMMIT_AUTHORIZED`.
+- Mọi thao tác trên Cortex MCP (`cortex_code_search`, `cortex_code_context`, `cortex_detect_changes`, `cortex_code_impact`) bắt buộc dùng slug `f04-agent` (số `0`), tuyệt đối không truyền URL GitHub.
+- Chỉ được push lên nhánh phụ `ai/*` trên GitHub để chạy CI; tuyệt đối cấm push/merge vào `main`.
 
 ## Output bắt buộc
 - COMPANY STATUS
