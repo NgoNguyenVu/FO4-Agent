@@ -1,25 +1,37 @@
 # Company State
 
-- **Cập nhật:** 2026-11-14 (Autonomous Project Audit & Continuous Improvement Cycle v3 — đóng cycle)
+- **Cập nhật:** 2026-11-15 (Company Cycle scan v4 — đóng cycle)
 - **Người cập nhật:** Manager Agent (Engineering Director)
-- **Current Sprint:** Security closure + Operations
-- **Branch:** `ai/auto-cycle-v3` (tách từ `main` `de891cb`; push nhánh phụ để tạo PR, không đụng `main`)
-- **Company Delivery Status:** **4 task DONE (cycle v3)** — TASK-044 (CLI resolve worker), TASK-043 (process lock integration), TASK-032 (đóng remediation), TASK-001 (security cleanup). Reviewer APPROVED + QA PASS; Gate A/A/A/—.
-- **Active Cycle Status:** **CYCLE v3 COMPLETE** — `npm test` **306/306**; 2 commit code (`fbc3a43`, + test TASK-043) + 1 commit docs.
-- **Current Task:** _(không có)_ — chờ Owner: TASK-003 Stage B, TASK-039 `purchaseTimeoutSeconds`; task khả thi: TASK-043.
-- **Task Status:** **DONE (cycle v3)**
-- **Reviewer:** **APPROVED** — TASK-044, TASK-001 re-review, TASK-039 (code) — 2026-11-14
-- **QA:** **PASS** — TASK-044 (302/302), TASK-001 (302/302), TASK-039 (302/302, có điều kiện)
+- **Current Sprint:** Company Cycle scan v4 — Security → Data Integrity → Reliability → Architecture
+- **Branch:** `ai/auto-cycle-v4` (tách từ `main` `3eb678a`; push nhánh phụ để tạo PR, không đụng `main`)
+- **Company Delivery Status:** **5 task DONE (cycle v4)** — TASK-045 (mock harness + integration test buy), TASK-046 (vá validate config), TASK-047 (fail-closed worker state), TASK-048 (resolve `--dry-run`), TASK-049 (validator dùng chung). Reviewer APPROVED + QA PASS; Gate A toàn bộ.
+- **Active Cycle Status:** **CYCLE v4 COMPLETE** — `npm test` **343/343**; `scan:secrets` + `scan:history` pass; chưa commit/push tại thời điểm ghi (commit trên nhánh `ai/auto-cycle-v4`).
+- **Current Task:** _(không có)_ — chờ Owner: TASK-003 Stage B, TASK-039 `purchaseTimeoutSeconds`.
+- **Task Status:** **DONE (cycle v4)**
+- **Reviewer:** **APPROVED** — TASK-045, TASK-046, TASK-047, TASK-048, TASK-049 — 2026-11-14
+- **QA:** **PASS** — TASK-045 (319/319), TASK-046 (325/325), TASK-047 (331/331), TASK-048 (337/337), TASK-049 (343/343)
 - **Parallel Security Task:** TASK-025 — **ACCEPTED RISK APPROVED** (không có credential production)
-- **Blocked Task:** `TASK-045` — integration test vòng buy (thiếu harness Playwright/Telegram test)
+- **Blocked Task:** _(không có)_ — TASK-045 đã unblock và DONE ở cycle v4
 - **Authorization Required:** TASK-003 Stage B (hard cap/live gate); TASK-039 (`purchaseTimeoutSeconds = 0`)
-- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v3`)
+- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v4`)
 - **Push Allowed:** Chỉ nhánh `ai/*` (phục vụ PR); **không push `main`**
 - **Merge Allowed:** NO
 - **Live Run Allowed:** NO
 - **Security Risk Acceptance:** TASK-025 — **APPROVED**; TASK-026 — **APPROVED** (force push lịch sử cũ).
 
-## 0b. Cycle 2026-11-14 v3 — Security closure + Operations
+## 0. Cycle 2026-11-14 v4 — Company Cycle scan
+
+| Task | Deliverable | Trạng thái | Gate |
+|---|---|---|---|
+| `TASK-045` | `lib/__fixtures__/mock-playwright.js`, `mock-telegram.js`, `lib/buy-worker-lifecycle.integration.test.js` (13 test) | **DONE** | A (95) |
+| `TASK-046` | Validate `monitorExistingOrders`, `ovrPhoi`, `maxPriceEach` + 6 test | **DONE** | A (94) |
+| `TASK-047` | `WORKER_STATE_CORRUPT` + quarantine `.corrupt-<ISO>` + 6 test | **DONE** | A (95) |
+| `TASK-048` | `--dry-run`, `resolveWorkers()`, `restoreProcessBlock()` + 6 test | **DONE** | A (97) |
+| `TASK-049` | `lib/config-validators.js` + 6 test; config/spend-guard dùng chung | **DONE** | A (93) |
+
+Chi tiết: [`docs/completed/CYCLE-2026-11-14-v4.md`](completed/CYCLE-2026-11-14-v4.md).
+
+## 0a. Cycle 2026-11-14 v3 — Security closure + Operations
 
 | Task | Deliverable | Trạng thái | Gate |
 |---|---|---|---|
@@ -32,7 +44,7 @@
 
 Chi tiết: [`docs/completed/CYCLE-2026-11-14-v3.md`](completed/CYCLE-2026-11-14-v3.md).
 
-## 0c. Cycle 2026-11-13 v2 — Stage B
+## 0b. Cycle 2026-11-13 v2 — Stage B
 
 | Task | Deliverable | Trạng thái | Commit | Gate |
 |---|---|---|---|---|
@@ -41,7 +53,7 @@ Chi tiết: [`docs/completed/CYCLE-2026-11-14-v3.md`](completed/CYCLE-2026-11-14
 
 Chi tiết: [`docs/completed/CYCLE-2026-11-13-v2.md`](completed/CYCLE-2026-11-13-v2.md).
 
-## 0. Cycle 2026-11-13 v1 — tóm tắt
+## 0c. Cycle 2026-11-13 v1 — tóm tắt
 
 | Task | Deliverable | Commit | Gate |
 |---|---|---|---|
@@ -132,11 +144,11 @@ TASK-001 chỉ được đóng khi **B1–B9** đóng và có security sign-off.
 
 | Mảng | Trạng thái | Ghi chú |
 |---|---|---|
-| Engineering | **Remediation tiếp tục** | Patch TASK-001 đã commit/push; không merge/release/live |
-| Security | **Đang xử lý** | History sạch; staged-blob scan đã đóng; còn evidence/sign-off |
+| Engineering | **Ổn định, đang hardening** | Cycle v4 đóng 5 task (test/validate/state/CLI); không merge/release/live |
+| Security | **Đã đóng remediation** | TASK-001 DONE; history sạch; scan:secrets/staged/history pass |
 | Release | **Blocked** | Không chạy live, không merge thay đổi lớn |
-| Task board | **2 task mở + 12 completed** | Mở: TASK-001 (re-review), TASK-039 (Review/QA); completed: 007, 024, 025, 026, 027, 028, 029, 030, 031, 032, 033, 034, 035 |
-| Bàn giao tiếp theo | `TASK-039` — ICON refactor (TODO) | Reviewer → QA trên diff ICON; sau đó `TASK-001` re-review + QA |
+| Task board | **5 task DONE cycle v4 + 4 task DONE cycle v3** | Cycle v4: 045, 046, 047, 048, 049. Mở (chờ Owner): TASK-003 Stage B, TASK-039. Follow-up: `agent.lock` fail-closed, `--quarantine`, gom OVR parser |
+| Bàn giao tiếp theo | `TASK-003 Stage B` + `TASK-039` (Owner Decision) | Sau đó: follow-up TASK-047/048/049 |
 
 ## 5. Quyết định của Manager — 2026-11-04
 
@@ -150,8 +162,8 @@ TASK-001 chỉ được đóng khi **B1–B9** đóng và có security sign-off.
 
 ## 6. Next Action
 
-1. `TASK-039` — **Review + QA** trên diff ICON (14 file runtime + 4 test + README) trong working tree; nếu APPROVED + PASS → `READY_FOR_COMMIT` (chưa commit nếu chưa có authorization).
-2. `TASK-001` — Reviewer re-review + QA pass; chỉ đóng khi B1–B9 + TASK-035 DONE và `npm run check` xanh (`9542347` đã 198/198).
-3. Owner Decision — xác nhận tham số tài chính `maxPriceBP 888888` (worst-case ~12.4M BP/vòng) và `purchaseTimeoutSeconds 0` (chờ vô hạn) theo TASK-003.
+1. **Owner Decision:** TASK-003 Stage B (bật hard cap/live gate) và TASK-039 `purchaseTimeoutSeconds` — không tự đổi tham số tài chính.
+2. **Follow-up không chặn:** fail-closed cho `agent.lock` hỏng; `worker:resolve --quarantine`; gom `parseOvrList` + `validateOvrSpec` về một helper chung.
+3. Định kỳ chạy `npm run scan:history` (đã có trong CI).
 
-**STOP CONDITION: NO** — `TASK-039` chưa Review/QA, `TASK-001` chưa re-review, còn quyết định tài chính chờ Owner.
+**STOP CONDITION: YES** — cycle v4 đóng 5 task sinh từ scan (Gate A toàn bộ, 343/343 test, scan pass). Chỉ còn quyết định tài chính chờ Owner; follow-up không chặn đã ghi nhận cho cycle sau.

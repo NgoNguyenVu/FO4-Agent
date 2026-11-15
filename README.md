@@ -75,12 +75,30 @@ con nguoi xac nhan. Xay ra khi agent crash/restart ma registry con worker
    # hoac resolve tat ca worker unknown:
    npm.cmd run worker:resolve -- --resolve-all
    ```
-   Them `--note "..."` de luu ly do, `--json` de lay ket qua cho script.
+   Them `--note "..."` de luu ly do, `--dry-run` de xem truoc, `--json` de lay
+   ket qua cho script. Neu `--resolve-all` loi mot phan, CLI van resolve cac
+   worker con lai, in summary va exit 1 de lan chay sau xu ly tiep.
    Neu muon xoa han state worker (giu lai file de doi chieu neu can):
    ```powershell
    Remove-Item "$env:LOCALAPPDATA\FO4PurchaseAgent\state\workers.json"
    ```
 3. Khoi dong lai agent va gui `/startagent`.
+
+### Worker state hong
+
+Neu `workers.json` khong parse duoc hoac sai cau truc (vi du `workers` khong
+phai mang), agent **khong** coi do la registry rong — lam vay se mo khoa mua
+chong. Agent dung voi ma loi `WORKER_STATE_CORRUPT` va tao ban sao
+`workers.json.corrupt-<thoi-gian>` trong cung thu muc.
+
+1. Dung agent, mo file `.corrupt-*` de doi chieu worker dang co.
+2. Kiem tra bot/Telegram bang `/stop`: chac chan khong con worker nao chay.
+3. Sua `workers.json` cho hop le, hoac di chuyen file hong ra ngoai:
+   ```powershell
+   Move-Item "$env:LOCALAPPDATA\FO4PurchaseAgent\state\workers.json" `
+     "$env:LOCALAPPDATA\FO4PurchaseAgent\state\workers.json.bak"
+   ```
+4. Khoi dong lai agent va gui `/startagent`.
 
 ### Process lock
 

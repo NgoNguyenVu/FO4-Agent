@@ -1,6 +1,13 @@
 # Backlog CTO — FO4-Agent
 
-- **Cập nhật:** 2026-11-14 (cycle v3 — đóng TASK-001/TASK-032/TASK-043/TASK-044; xem `docs/completed/CYCLE-2026-11-14-v3.md`)
+- **Cập nhật:** 2026-11-15 (cycle v4 — Company Cycle scan: đóng TASK-045/046/047/048/049; xem `docs/completed/CYCLE-2026-11-14-v4.md`)
+- **Thay đổi cycle 2026-11-14 v4:**
+  - `TASK-045` P1 → **DONE**: mock Playwright/Telegram adapter + integration test vòng buy & nhánh ICON rủi ro cao (13 test). Gate A (95/100). Gỡ `BLOCKED` từ v3.
+  - `TASK-046` P0 → **DONE**: vá lỗ hổng validate `monitorExistingOrders`, `ovrPhoi`, `maxPriceEach` (6 test). Gate A (94/100).
+  - `TASK-047` P0 → **DONE**: fail-closed khi `workers.json` hỏng + quarantine `.corrupt-<ISO>` + validate cấu trúc (6 test). Gate A (95/100).
+  - `TASK-048` P2 → **DONE**: `worker:resolve --dry-run` + xử lý lỗi một phần + khôi phục process block (6 test mới, tổng 20). Gate A (97/100).
+  - `TASK-049` P3 → **DONE**: gom validator dùng chung `lib/config-validators.js` (6 test). Gate A (93/100).
+  - **Follow-up mới:** fail-closed cho `agent.lock` hỏng; `worker:resolve --quarantine`; gom `parseOvrList` + `validateOvrSpec`.
 - **Thay đổi cycle 2026-11-14 v3:**
   - `TASK-001` P0 Security → **DONE** (2026-11-14): re-review APPROVED + QA PASS; `scan:history` 0 finding, fresh clone sạch, CI `main` xanh.
   - `TASK-032` P2 → **DONE**: evidence B1–B9 + sign-off 2026-11-04; đóng sau khi TASK-001 hoàn tất.
@@ -43,7 +50,7 @@
 |---|---|---|
 | P0-01 — Debug artifact/endpoint | **Remediation complete — pending re-review + QA** | B1–B9 đóng; remote sạch `26a9d46`; còn TASK-001 re-review/QA + CI xanh (`TASK-007`). |
 | P0-05 — Worker adoption/concurrency | **Partial** | Đã có `features/icon-session.js`, `lib/ui-lock.js`, `features/icon-buy/tasks.js`; nhưng buy worker vẫn suy luận từ chat text. |
-| P1-06 — Missing tests | **Partial** | Từ 3 file test lên 6 file, 174 test pass; vẫn thiếu integration test controller/session/recovery. |
+| P1-06 - Missing tests | **Partial (v4)** | 343 test pass; đã có integration test vòng buy/ICON (TASK-045) + fail-closed state (TASK-047); vẫn thiếu integration controller/recovery. |
 | P0-06 — Config/docs drift | **Mở rộng** | Thêm lệch `maxPlayersPerBatch` (README 1 mã/lượt, config 3) và `targetGrade` (default 6, raw config 7). |
 | P0-07 — Working tree critical | **Partial** | TASK-001 patch đã commit/push; còn 3 file runtime unstaged; `TASK-007` AUTHORIZATION_REQUIRED. |
 | P1-10 — UI lock hardening | **Mới** | Khóa UI mới chưa có timeout/ownership; có thể deadlock hoặc giữ khóa sai. |
@@ -135,10 +142,11 @@
 
 ### P0-05 — Worker adoption và concurrency dựa trên chat text, dễ double-start
 
-- **Trạng thái:** **Partial**
+- **Trạng thái:** **Partial (registry đã fail-closed ở cycle v4)**
 - **Nhóm:** Đồng bộ / Concurrency
 - **Bằng chứng:**
   - Đã giảm thiểu một phần: `features/icon-session.js` chặn hai phiên ICON chạy song song; `lib/ui-lock.js` tuần tự hóa thao tác UI; `features/icon-buy/tasks.js` chụp baseline `/stop` và chỉ dừng task ICON mới.
+  - **Cycle v4 (TASK-047):** `workers.json` hỏng/sai cấu trúc → `WORKER_STATE_CORRUPT`, agent chặn worker mới + quarantine `.corrupt-<ISO>`; hết fail-open khi state không đáng tin.
   - Phần còn hở: buy worker vẫn được suy ra từ chat text qua `checkAutoBuyRunning`, `confirmSuspectedWorker`, `verifyTailOrphan`, `pendingBuyCompletion`, `getLatestAutoBuyStatus`.
   - `checkAutoBuyRunning()` vẫn gửi `/stop` và parse reply; `waitForCycleCompletion()` xử lý orphan terminal message.
   - `lib/ui-lock.js` chưa có timeout, ownership hoặc cancellation; `features/icon-buy/order.js` thủ công release rồi acquire lại khóa.
@@ -149,9 +157,12 @@
 
 ### P0-06 — Config runtime và README lệch nhau, không có single source of truth
 
-- **Trạng thái:** Open
+- **Trạng thái:** **Partial (validate đã chặt hơn ở cycle v4)**
 - **Nhóm:** Cấu hình / Kiểm soát chi tiêu
 - **Bằng chứng:**
+  - **Cycle v4 (TASK-046):** `features/config.js` validate thêm `iconBuy.monitorExistingOrders` (boolean), `upgrade.ovrPhoi` (list/range số nguyên dương, span ≤ 50), `upgrade.maxPriceEach` (`2M`, `500K`, `1,5M`, `2000000`) — lỗi nổi ngay khi start thay vì giữa phiên.
+  - **Cycle v4 (TASK-049):** validator dùng chung `lib/config-validators.js`, hết bản sao luật giữa config và spend-guard.
+  - Chưa có kiểm tra README ↔ `config.json` tự động; default trong code vẫn có thể lệch raw config.
   - README ghi OVR **115–120**, giá tối đa **666.666 BP**, quantity **5**.
   - `config.json` thực tế: OVR **118–123**, `maxPriceBP` **888888**, `quantityPerAttempt` **3**.
   - README nói ICON chọn **1 mã/lượt**; `config.json` đặt `iconBuy.maxPlayersPerBatch = 3`; runner chọn tối đa 3 mã.
@@ -177,7 +188,7 @@
   - Cortex index chưa reindex theo HEAD `3b048b9`.
 - **Tác động:** Review/CI bị mù trước thay đổi lớn; dễ merge regression, đặc biệt ở controller, icon runner và upgrade runner. Backlog/roadmap có thể dựa trên graph cũ.
 - **Kết quả cần đạt:** Freeze feature work; review diff theo từng nhóm nhỏ; commit/push; chạy lại test; reindex Cortex; chỉ sau đó mới tiếp tục thay đổi kiến trúc.
-- **Điều kiện hoàn thành:** `git status` sạch; Cortex index khớp HEAD; `cortex_detect_changes` được review; 174+ test pass; có CI gate; TASK-007 được Owner Decision + review độc lập + push; CI xanh.
+- **Điều kiện hoàn thành:** `git status` sạch; Cortex index khớp HEAD; `cortex_detect_changes` được review; 343 test pass; có CI gate; TASK-007 được Owner Decision + review độc lập + push; CI xanh.
 - **Task:** `TASK-007`
 
 ## 2. P1 — Important
@@ -238,19 +249,19 @@
 
 ### P1-06 — Test chủ yếu là unit/static, thiếu integration
 
-- **Trạng thái:** **Partial**
-- **Bằng chứng:** Hiện có **6 file test**, **174 test pass**:
-  - `agent.test.js`: 1.643 dòng, 105 test.
-  - `features/autonangcap.test.js`: 860 dòng, 40 test.
-  - `features/icon-buy/patterns.test.js`: 230 dòng, 16 test.
-  - `features/icon-session.test.js`: 99 dòng, 4 test.
-  - `features/icon-buy/tasks.test.js`: 67 dòng, 3 test.
-  - `lib/ui-lock.test.js`: 60 dòng, 3 test.
-- Nhiều test trong `agent.test.js` vẫn dùng `assert.match(src, /.../)` trên source thay vì kiểm tra behavior. Không có automated browser/Telegram integration test; `debug/` là script thủ công.
-- **Tác động:** Các phần dễ vỡ nhất — DOM interaction, iframe lifecycle, chat observation, recovery — không được cover tự động. Source-regex test dễ vỡ và khuyến khích copy-paste.
-- **Kết quả cần đạt:** Fake `Page`/`ChatSession` harness; contract test cho từng feature; integration test cho controller/session/recovery; source invariant chuyển thành lint rule; live smoke test opt-in.
+- **Trạng thái:** **Partial (cải thiện cycle v4)**
+- **Bằng chứng:** Hiện có **343 test pass** (cycle v4):
+  - `lib/buy-worker-lifecycle.integration.test.js` **(mới, TASK-045)**: 13 test vòng buy + nhánh ICON rủi ro cao trên mock Playwright/Telegram tái dùng parser thật.
+  - `lib/worker-state-corruption.test.js` **(mới, TASK-047)**: 6 test fail-closed state hỏng.
+  - `scripts/resolve-worker.test.js`: 20 test CLI (14 cũ + 6 mới TASK-048).
+  - `lib/config-validators.test.js` **(mới, TASK-049)**: 6 test validator dùng chung.
+  - `features/config.test.js`: 6 test validate config (TASK-046).
+  - Các suite cũ: `agent.test.js`, `features/autonangcap.test.js`, `features/icon-buy/patterns.test.js`, `features/icon-session.test.js`, `features/icon-buy/tasks.test.js`, `lib/ui-lock.test.js`, `lib/worker-registry.integration.test.js`.
+- Phần còn hở: chưa có browser/Telegram integration **thật** (mock adapter chỉ phủ bề mặt buy cycle dùng); `agent.test.js` vẫn còn nhiều `assert.match(src, /.../)`.
+- **Tác động:** Các phần dễ vỡ nhất — DOM interaction, iframe lifecycle, chat observation, recovery — đã có thêm integration test hành vi nhưng chưa phủ toàn bộ controller. Source-regex test vẫn dễ vỡ.
+- **Kết quả cần đạt:** Fake `Page`/`ChatSession` harness mở rộng; contract test cho từng feature; integration test cho controller/session/recovery; source invariant chuyển thành lint rule; live smoke test opt-in.
 - **Điều kiện hoàn thành:** Các flow chính có integration test; test behavior không còn assert source string.
-- **Task:** `TASK-013`
+- **Task:** `TASK-013` (TASK-045 đã đóng phần buy/ICON)
 
 ### P1-07 — Không có CI, lint, typecheck hoặc secret scan
 
