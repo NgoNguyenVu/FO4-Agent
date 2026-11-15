@@ -132,9 +132,32 @@ function writeJsonAtomic(file, value) {
 
 // Process lock còn "sống" khi lease chưa hết VÀ pid vẫn tồn tại. Chỉ dựa vào
 // lease là chưa đủ: một pid đã chết vẫn có thể để lại lease trong tương lai.
+// Lock hỏng/rỗng được coi là ĐANG chạy (fail-closed): thà chặn resolve còn hơn
+// xóa state trong khi một agent khác có thể vẫn đang mua.
 function agentIsRunning(lockPath) {
-  const lock = readJson(lockPath);
-  if (!lock || typeof lock !== "object") return false;
+  let text;
+  try {
+    text = fs.readFileSync(lockPath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    return true;
+  }
+  if (!text.trim()) return true;
+  let lock;
+  try {
+    lock = JSON.parse(text);
+  } catch (error) {
+    return true;
+  }
+  if (!lock || typeof lock !== "object" || Array.isArray(lock)) return true;
+  if (
+    typeof lock.token !== "string" ||
+    !lock.token.trim() ||
+    !Number.isInteger(Number(lock.pid)) ||
+    !Number.isFinite(Number(lock.leaseUntil))
+  ) {
+    return true;
+  }
   const leaseUntil = Number(lock.leaseUntil) || 0;
   if (leaseUntil <= Date.now()) return false;
   return defaultIsProcessAlive(lock.pid);

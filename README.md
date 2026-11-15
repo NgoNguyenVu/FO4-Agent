@@ -106,6 +106,28 @@ Instance thu hai bi tu choi (`AGENT_LOCKED`, exit code 1) khi instance dau con
 song. Neu agent da tat ma van bi chan, cho het lease (60 giay) hoac xoa
 `agent.lock` sau khi chac chan khong con process `node agent.js` nao chay.
 
+### Process lock hong (`AGENT_LOCK_CORRUPT`)
+
+Neu `agent.lock` rong, khong parse duoc hoac sai cau truc (thieu `token`, `pid`
+khong phai so nguyen, `leaseUntil` khong hop le), agent **khong** coi do la
+"khong co lock" — lam vay se mo duong cho hai instance cung mua. Agent dung voi
+ma loi `AGENT_LOCK_CORRUPT` va tao ban sao `agent.lock.corrupt-<thoi-gian>`.
+`heartbeat`/`release` cung khong ghi de file hong; CLI `worker:resolve` coi lock
+hong la "agent dang chay" va tu choi sua state.
+
+1. Dung agent va chac chan khong con process `node agent.js` nao chay:
+   ```powershell
+   Get-Process node -ErrorAction SilentlyContinue
+   ```
+2. Mo file `agent.lock.corrupt-*` de doi chieu `pid`/`token` voi process that.
+3. Neu chac chan khong con agent, di chuyen lock hong ra ngoai (giu lai de doi
+   chieu):
+   ```powershell
+   Move-Item "$env:LOCALAPPDATA\FO4PurchaseAgent\state\agent.lock" `
+     "$env:LOCALAPPDATA\FO4PurchaseAgent\state\agent.lock.bak"
+   ```
+4. Khoi dong lai agent va gui `/startagent`.
+
 ## Kiem tra
 
 ```powershell

@@ -1,6 +1,15 @@
 # Backlog CTO — FO4-Agent
 
-- **Cập nhật:** 2026-11-15 (cycle v4 — Company Cycle scan: đóng TASK-045/046/047/048/049; xem `docs/completed/CYCLE-2026-11-14-v4.md`)
+- **Cập nhật:** 2026-11-15 (cycle v5 — đóng TASK-050/051/052; WONT_DO TASK-003 Stage B / TASK-039)
+- **Quyết định Owner 2026-11-15:**
+  - `TASK-003 Stage B` (hard cap/live gate) → **WONT_DO** — Owner xác nhận không có nhu cầu triển khai.
+  - `TASK-039` (`purchaseTimeoutSeconds = 0`) → **WONT_DO** — Owner chấp nhận hành vi hiện tại.
+  - Hai hạng mục trên **không nhắc lại ở các cycle sau**.
+- **Thay đổi cycle 2026-11-15 v5:**
+  - `TASK-050` P1 → **DONE**: fail-closed khi `agent.lock` hỏng + quarantine `.corrupt-<ISO>` + CLI fail-closed + runbook (9 test). Gate A (93/100).
+  - `TASK-051` P2 → **DONE**: hợp nhất `validateOvrSpec` + `parseOvrList` về `lib/ovr-spec.js` (6 test). Gate A (91/100).
+  - `TASK-052` P1 → **DONE**: integration test hành vi cho `waitForCycleCompletion`, `interactive-prompt`, `verifyTailOrphan` (16 test). Gate A (94/100).
+  - **Follow-up còn lại (không chặn):** `worker:resolve --quarantine`; mock frame cho `checkInventoryIcons`.
 - **Thay đổi cycle 2026-11-14 v4:**
   - `TASK-045` P1 → **DONE**: mock Playwright/Telegram adapter + integration test vòng buy & nhánh ICON rủi ro cao (13 test). Gate A (95/100). Gỡ `BLOCKED` từ v3.
   - `TASK-046` P0 → **DONE**: vá lỗ hổng validate `monitorExistingOrders`, `ovrPhoi`, `maxPriceEach` (6 test). Gate A (94/100).
@@ -13,7 +22,7 @@
   - `TASK-032` P2 → **DONE**: evidence B1–B9 + sign-off 2026-11-04; đóng sau khi TASK-001 hoàn tất.
   - `TASK-044` P1 → **DONE** (`fbc3a43`): CLI `resolve-worker` cho worker `unknown`, chặn khi agent còn sống; 14 test. Gate A (96/100).
   - `TASK-043` P1 → **DONE**: integration test process lock với 2 process thật (đua lock, stale takeover, heartbeat/release). Gate A (94/100).
-  - `TASK-039` P0 → **AUTHORIZATION_REQUIRED**: code APPROVED + QA PASS (retro), nhưng `purchaseTimeoutSeconds = 0` cần Owner quyết định.
+  - `TASK-039` P0 → **AUTHORIZATION_REQUIRED** ở v3 → **WONT_DO** ngày 2026-11-15 (Owner chấp nhận `purchaseTimeoutSeconds = 0`; không nhắc lại).
   - `TASK-045` P1 → **BLOCKED**: integration test vòng buy cần harness Playwright/Telegram test.
 - **Thay đổi cycle 2026-11-13 v2:**
   - `TASK-041` (TASK-005 Stage B) → **DONE** (`d976b6d`): controller dùng worker registry làm source of truth.
@@ -23,8 +32,10 @@
   - `TASK-005` P0 Concurrency → **DONE Stage A** (`7fee795`).
   - `TASK-003` P0 Financial → **DONE Stage A** (`767323f`), **chưa enforcement**.
 - **Follow-up mới (đề xuất):**
-  - `TASK-040` (P0, cần Owner): TASK-003 Stage B — đặt cap thật + nối guard vào buy/icon/upgrade + reconcile reservation.
-  - `TASK-045` (P1, BLOCKED): integration test vòng buy + nhánh ICON rủi ro cao (`monitorExistingOrders`, `captureStopBaselineWithRetry`, deadline vô hạn).
+  - `TASK-040` (P0): TASK-003 Stage B — **WONT_DO** ngày 2026-11-15 (Owner không có nhu cầu).
+  - `TASK-045` (P1): integration test vòng buy + nhánh ICON rủi ro cao — **DONE** ở cycle v4.
+  - `TASK-048-F1` (P2): `worker:resolve --quarantine` dọn state/lock hỏng có kiểm soát — chưa làm, không chặn.
+  - `TASK-052-F1` (P3): mock frame/mini-app cho `checkInventoryIcons` retry — chưa làm, không chặn.
 
 - **Cập nhật:** 2026-11-04 (TASK-032 evidence — B1–B9 closed; TASK-001 REMEDIATION_COMPLETE, chờ re-review + QA; TASK-007 AUTHORIZATION_REQUIRED)
 - **Người lập:** CTO Agent; cập nhật bởi Manager Agent
@@ -115,8 +126,9 @@
 
 ### P0-03 — Guardrail tài chính quá mỏng, không có hard cap
 
-- **Trạng thái:** Open
+- **Trạng thái:** **WONT_DO (Owner 2026-11-15)** — Owner xác nhận không có nhu cầu triển khai Stage B; **không nhắc lại ở các cycle sau**.
 - **Nhóm:** Kiểm soát chi tiêu
+- **Ghi chú:** Stage A (`lib/spend-guard.js` + config `spendLimits`, chưa enforcement) vẫn giữ nguyên trong code nhưng không bật.
 - **Bằng chứng:**
   - README dòng 40–42: agent **không áp đặt lifetime BP budget**; bot/account balance quyết định.
   - `config.json` có `maxPriceBP` và `maxPerCycle`, nhưng không có cap theo run/ngày/tuần.
