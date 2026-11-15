@@ -9,6 +9,7 @@ const {
   getFreshSince
 } = require("../../lib/text-utils");
 const { countBotSystemErrors } = require("../../lib/bot-signals");
+const { parseOvrSpec } = require("../../lib/ovr-spec");
 
 // ---- Bot message patterns (nâng cấp; nbsp-safe như auto-buy) ----
 const SP = "[ \\u00a0]";
@@ -530,28 +531,9 @@ function isUpgradeTargetListExhausted(cards, targetGrade) {
 }
 
 // "114,115,116" hoặc "112-118" (hint của bot) -> [114,115,116,...].
+// TASK-051: luật parse nằm ở lib/ovr-spec.js để khớp validateOvrSpec của config.
 function parseOvrList(raw) {
-  const out = new Set();
-  const parts = String(raw).split(",");
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed) throw new Error(`OVR không hợp lệ: "${part}"`);
-    const range = trimmed.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (range) {
-      const from = Number(range[1]);
-      const to = Number(range[2]);
-      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from > to || to - from > 50) {
-        throw new Error(`Dải OVR không hợp lệ: ${trimmed}`);
-      }
-      for (let ovr = from; ovr <= to; ovr += 1) out.add(ovr);
-      continue;
-    }
-    const single = Number(trimmed);
-    if (!Number.isSafeInteger(single)) throw new Error(`OVR không hợp lệ: ${trimmed}`);
-    out.add(single);
-  }
-  if (!out.size) throw new Error(`Danh sách OVR trống: ${raw}`);
-  return [...out].sort((a, b) => a - b);
+  return parseOvrSpec(raw);
 }
 
 // OVR của các thẻ phôi đã chọn (có badge ĐÃ CHỌN) — kiểm tra spec thật thay vì

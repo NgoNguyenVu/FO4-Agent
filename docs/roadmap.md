@@ -1,32 +1,39 @@
 # Roadmap — FO4-Agent
 
-- **Cập nhật:** 2026-11-15 (cycle v4 — Company Cycle scan; đóng TASK-045/046/047/048/049; xem `docs/completed/CYCLE-2026-11-14-v4.md`)
+- **Cập nhật:** 2026-11-15 (cycle v5 — Reliability + Architecture + Integration tests; đóng TASK-050/051/052; xem `docs/completed/CYCLE-2026-11-15-v5.md`)
 - **Người lập:** Architect Agent; cập nhật bởi Manager Agent
 - **Nguồn dữ liệu:** `docs/backlog.md` + Cortex MCP (`cortex_code_search`, `cortex_code_context`, `cortex_detect_changes`, `cortex_code_impact`).
 - **Trạng thái:** Roadmap đề xuất, chưa cam kết ngày cứng. Thời lượng là ước tính cho một team nhỏ.
 
-## 0. Cập nhật cycle 2026-11-14
+## 0. Cập nhật cycle 2026-11-15
 
-### 0.1. Cycle v4 — Company Cycle scan (2026-11-14 → 2026-11-15)
+### 0.1. Cycle v5 — Reliability + Architecture + Integration tests (2026-11-15)
+
+- **Đã xong:** TASK-050 (fail-closed `agent.lock` + quarantine `.corrupt-<ISO>` + runbook, Gate A 93), TASK-051 (hợp nhất OVR về `lib/ovr-spec.js`, Gate A 91), TASK-052 (16 integration/behavior test từ scan v5, Gate A 94). `npm test` **374/374**.
+- **WONT_DO (Owner 2026-11-15):** TASK-003 Stage B (hard cap/live gate); TASK-039 `purchaseTimeoutSeconds = 0` — không nhắc lại ở các cycle sau.
+- **Follow-up không chặn:** `worker:resolve --quarantine`; mock frame cho `checkInventoryIcons`.
+- **Điều kiện:** không merge/push `main`; cycle v5 chỉ push `ai/auto-cycle-v5` để tạo PR.
+
+### 0.2. Cycle v4 — Company Cycle scan (2026-11-14 → 2026-11-15)
 
 - **Đã xong:** TASK-045 (mock harness + integration test buy/ICON, Gate A), TASK-046 (vá validate config, Gate A), TASK-047 (fail-closed worker state, Gate A), TASK-048 (resolve `--dry-run` + lỗi một phần, Gate A), TASK-049 (validator dùng chung, Gate A). `npm test` **343/343**.
-- **Chờ Owner:** TASK-003 Stage B (hard cap/live gate); TASK-039 `purchaseTimeoutSeconds = 0`.
+- **Chờ Owner:** TASK-003 Stage B (hard cap/live gate); TASK-039 `purchaseTimeoutSeconds = 0` — sau đó chuyển **WONT_DO** ngày 2026-11-15.
 - **Follow-up không chặn:** fail-closed `agent.lock`; `worker:resolve --quarantine`; gom `parseOvrList` + `validateOvrSpec`.
 - **Điều kiện:** không merge/push `main`; cycle v4 chỉ push `ai/auto-cycle-v4` để tạo PR.
 
-### 0.2. Cycle v3 — Security closure + Operations (2026-11-14)
+### 0.3. Cycle v3 — Security closure + Operations (2026-11-14)
 
 - **Đã xong:** TASK-044 (CLI resolve worker, `fbc3a43`, Gate A), TASK-043 (integration test process lock với 2 process thật, Gate A), TASK-032 (đóng remediation), TASK-001 (security cleanup re-review + QA, Gate A). `npm test` **306/306**.
 - **Chờ Owner:** TASK-003 Stage B (hard cap/live gate); TASK-039 `purchaseTimeoutSeconds = 0`.
 - **Blocked:** TASK-045 — cần harness Playwright/Telegram test và quyết định timeout.
 - **Điều kiện:** không merge/push `main`; cycle v3 chỉ push `ai/auto-cycle-v3` để tạo PR.
 
-### 0.3. Cycle v2 — Stage B (2026-11-13 → 2026-11-14)
+### 0.4. Cycle v2 — Stage B (2026-11-13 → 2026-11-14)
 
 - **Đã xong:** TASK-005 Stage B (controller dùng registry, `d976b6d`, Gate B) và TASK-004 Stage B (integration test process-level + runbook, `65c0426`, Gate A). `npm test` **288/288**.
 - **Điều kiện:** không merge/push `main`; cycle v2 chỉ push `ai/auto-cycle-v2` để tạo PR.
 
-### 0.4. Cycle v1 — Stage A (2026-11-13)
+### 0.5. Cycle v1 — Stage A (2026-11-13)
 
 - **Đã xong:** TASK-004 (lifecycle/shutdown/heartbeat), TASK-005 (process lock + worker registry), TASK-003 (spend guard + config, chưa enforcement).
 
@@ -61,7 +68,7 @@ lib/ui-lock (tuần tự hóa thao tác UI)
 - **Không có import cycle** trực tiếp.
 - 92 import nội bộ giữa các feature; feature tree không require chéo nhau, controller là hub.
 - Working tree hiện có **67 changed symbol / 12 file / 32 affected flow**, Cortex xếp risk **critical** (đo trước rewrite).
-- Test hiện tại (cycle v4): **343 test pass**, đã có integration test vòng buy trên mock Playwright/Telegram (TASK-045) và test fail-closed worker state (TASK-047).
+- Test hiện tại (cycle v5): **374 test pass**, đã có integration test vòng buy trên mock Playwright/Telegram (TASK-045), test fail-closed worker state/lock (TASK-047/050) và behavior test `waitForCycleCompletion`/`verifyTailOrphan` (TASK-052).
 
 ### 1.3. Bottleneck kiến trúc
 
@@ -162,7 +169,7 @@ TASK-024 ──► TASK-031 ──► TASK-032
 
 **Task:**
 - `TASK-002` — Persistent purchase journal + idempotency + reconcile khi startup.
-- `TASK-003` — Financial hard caps, **Stage B**: ledger-backed cap theo run/ngày/tuần, reservation và reconcile.
+- `TASK-003` — Financial hard caps, **Stage B**: ledger-backed cap theo run/ngày/tuần, reservation và reconcile. **WONT_DO (Owner 2026-11-15)** — không triển khai; Stage A vẫn giữ trong code nhưng không bật.
 - `TASK-005` — Worker state machine/lock/lease; chat text chỉ là evidence.
 - `TASK-006` — Config single source of truth + schema + README parity. **Partial (cycle v4):** TASK-046 vá validate `monitorExistingOrders`/`ovrPhoi`/`maxPriceEach`; TASK-049 gom validator dùng chung; còn README parity.
 - `TASK-017` — Harden UI lock: timeout, ownership, cancellation, test abort/reload.
@@ -282,7 +289,7 @@ TASK-018 ──► TASK-019
 - **0 P0 mở** trước khi chạy live trở lại.
 - **0 critical risk** từ `cortex_detect_changes` khi merge.
 - **Tất cả PR** pass CI: check + test + lint + secret scan + history scan.
-- **343 test** (cycle v4), có ít nhất 10 integration test cho controller/session/recovery.
+- **374 test** (cycle v5), có ít nhất 10 integration test cho controller/session/recovery.
 - **0 file > 500 dòng** không có owner/refactor plan.
 - **100% error code** có metadata `retryable`/`scope`/`userMessage`.
 - **0 artifact debug** trong git history; `npm run scan:history` pass 0 finding.

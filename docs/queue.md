@@ -1,17 +1,28 @@
 # Current Queue
 
-- **Cập nhật:** 2026-11-15 (Company Cycle scan v4 — đóng cycle)
-- **Branch làm việc:** `ai/auto-cycle-v4` — **không đụng `main`**
-- **Sprint:** Company Cycle scan v4 — Security → Data Integrity → Reliability → Architecture
-- **Company Status:** **CYCLE v4 COMPLETE** — 5 task DONE (TASK-045, TASK-046, TASK-047, TASK-048, TASK-049); TASK-039 + TASK-003 Stage B `AUTHORIZATION_REQUIRED`
-- **Active Task:** _(không có — cycle đóng 5 task; task tiếp theo xem §1)_
-- **Current Focus:** Owner Decision cho TASK-003 Stage B và `purchaseTimeoutSeconds` (TASK-039)
-- **Repo:** branch `ai/auto-cycle-v4` tách từ `main` `3eb678a`; push nhánh phụ để tạo PR, **không push `main`**
+- **Cập nhật:** 2026-11-15 (Cycle v5 — Reliability + Architecture + Integration tests)
+- **Branch làm việc:** `ai/auto-cycle-v5` — **không đụng `main`**
+- **Sprint:** Cycle v5 — Reliability + Architecture + Integration tests
+- **Company Status:** **CYCLE v5 COMPLETE** — 3 task DONE (TASK-050, TASK-051, TASK-052); Reviewer APPROVED + QA PASS; Gate A toàn bộ
+- **Active Task:** _(không có — cycle v5 đã đóng)_
+- **Current Focus:** Theo dõi PR của `ai/auto-cycle-v5`; follow-up không chặn: `worker:resolve --quarantine`, mock frame cho `checkInventoryIcons`
+- **Repo:** branch `ai/auto-cycle-v5` tách từ `main` `1f75097`; push nhánh phụ để tạo PR, **không push `main`**
 - **Freeze:** Không merge/release/live. Commit chỉ trên nhánh cycle.
 - **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed, lịch sử cũ).
-- **Residual risk:** `npm test` **343/343** trên nhánh cycle. TASK-003 vẫn ở Stage A (chưa enforcement); `purchaseTimeoutSeconds = 0` đang chờ Owner; `agent.lock` hỏng vẫn fail-open (follow-up TASK-047).
+- **Residual risk:** `npm test` **374/374** trên nhánh cycle. `agent.lock` hỏng đã fail-closed; OVR đã hợp nhất. Còn: `checkInventoryIcons` retry chưa có mock frame.
+- **Owner Decision (2026-11-15):** `TASK-003 Stage B` và `TASK-039` → **WONT_DO** — Owner xác nhận không có nhu cầu triển khai; **không nhắc lại ở các cycle sau**.
 
-## 0. Cycle 2026-11-14 v4 — Company Cycle scan (COMPLETE)
+## 0. Cycle 2026-11-15 v5 — Reliability + Architecture + Integration tests (COMPLETE)
+
+| Task | Nội dung | Trạng thái | Gate | Record |
+|---|---|---|---|---|
+| `TASK-050` | Fail-closed khi `agent.lock` hỏng + quarantine `.corrupt-<ISO>` + runbook | **DONE** | A (93/100) | [completed](completed/TASK-050-agent-lock-corruption.md) |
+| `TASK-051` | Hợp nhất `validateOvrSpec` + `parseOvrList` về `lib/ovr-spec.js` | **DONE** | A (91/100) | [completed](completed/TASK-051-unify-ovr-spec.md) |
+| `TASK-052` | Integration test hành vi cho nhánh thiếu (Company Cycle scan v5) | **DONE** | A (94/100) | [completed](completed/TASK-052-scan-integration-tests.md) |
+
+Tổng kết cycle: [`docs/completed/CYCLE-2026-11-15-v5.md`](completed/CYCLE-2026-11-15-v5.md).
+
+## 0a. Cycle 2026-11-14 v4 — Company Cycle scan (COMPLETE)
 
 | Task | Nội dung | Trạng thái | Gate | Record |
 |---|---|---|---|---|
@@ -23,7 +34,7 @@
 
 Tổng kết cycle: [`docs/completed/CYCLE-2026-11-14-v4.md`](completed/CYCLE-2026-11-14-v4.md).
 
-## 0a. Cycle 2026-11-14 v3 — Security closure + Operations (COMPLETE)
+## 0b. Cycle 2026-11-14 v3 — Security closure + Operations (COMPLETE)
 
 | Task | Nội dung | Trạng thái | Gate | Record |
 |---|---|---|---|---|
@@ -31,12 +42,12 @@ Tổng kết cycle: [`docs/completed/CYCLE-2026-11-14-v4.md`](completed/CYCLE-20
 | `TASK-043` | Integration test process lock với 2 process thật | **DONE** | A (94/100) | [completed](completed/TASK-043-process-lock-integration.md) |
 | `TASK-032` | Đóng remediation TASK-001 + evidence (review/QA đã có từ 2026-11-04) | **DONE** | — | [completed](completed/TASK-032-close-remediation.md) |
 | `TASK-001` | Security cleanup — re-review + QA, đóng P0 | **DONE** | A (92/100) | [completed](completed/TASK-001-security-cleanup.md) |
-| `TASK-039` | ICON refactor — retro review/QA; cần Owner cho `purchaseTimeoutSeconds` | **AUTHORIZATION_REQUIRED** | C (chưa đóng) | [request](authorizations/authorization-request-2026-11-14-task-039.md) |
+| `TASK-039` | ICON refactor — retro review/QA; `purchaseTimeoutSeconds = 0` | **WONT_DO** (Owner 2026-11-15) | — | [request](authorizations/authorization-request-2026-11-14-task-039.md) |
 | `TASK-045` | Integration test vòng buy + nhánh ICON rủi ro cao | **BLOCKED** ở v3 → **DONE** ở v4 | A (95/100) | [completed](completed/TASK-045-buy-integration-test.md) |
 
 Tổng kết cycle: [`docs/completed/CYCLE-2026-11-14-v3.md`](completed/CYCLE-2026-11-14-v3.md).
 
-## 0b. Cycle 2026-11-13 v2 — Stage B (COMPLETE)
+## 0c. Cycle 2026-11-13 v2 — Stage B (COMPLETE)
 
 | Task | Nội dung | Trạng thái | Gate | Record |
 |---|---|---|---|---|
@@ -45,26 +56,26 @@ Tổng kết cycle: [`docs/completed/CYCLE-2026-11-14-v3.md`](completed/CYCLE-20
 
 Tổng kết cycle: [`docs/completed/CYCLE-2026-11-13-v2.md`](completed/CYCLE-2026-11-13-v2.md).
 
-## 1. Ready — executable (ngoài cycle này)
+## 1. WONT_DO — Owner xác nhận 2026-11-15
 
-| Task | Priority | Bước kế tiếp |
+| Task | Nội dung | Quyết định |
 |---|---|---|
-| `TASK-003 Stage B` | P0 | Nối guard vào buy/icon/upgrade + đặt cap thật; **cần Owner Decision** (tham số tài chính) |
+| `TASK-003 Stage B` | Nối spend-guard vào buy/icon/upgrade + đặt cap thật + live gate | **WONT_DO** — Owner không có nhu cầu triển khai; không nhắc lại ở các cycle sau |
+| `TASK-039` | `purchaseTimeoutSeconds = 0` (chờ vô hạn) lệch baseline TASK-007 `3600` | **WONT_DO** — Owner chấp nhận hành vi hiện tại; không đổi tham số, không nhắc lại |
 
 ## 2. Authorization required
 
-| Task | Lý do |
-|---|---|
-| `TASK-003 Stage B` | Thay đổi hành vi tài chính live (hard cap + live gate) |
-| `TASK-039` | `purchaseTimeoutSeconds = 0` (chờ vô hạn) lệch baseline TASK-007 `3600` — xem [request](authorizations/authorization-request-2026-11-14-task-039.md) |
+_(không còn — toàn bộ hạng mục từng chờ Owner đã chuyển WONT_DO ngày 2026-11-15)_
 
-## 3. Follow-up — không chặn (đề xuất cycle sau)
+## 3. Follow-up — sau cycle v5
 
-| Task | Nội dung | Nguồn |
-|---|---|---|
-| `TASK-047-F1` | Fail-closed khi `agent.lock` hỏng (hiện coi như không có lock) | TASK-047 §6.1 |
-| `TASK-048-F1` | `worker:resolve --quarantine` dọn state hỏng có kiểm soát | TASK-047 §6.2 / TASK-048 §6.1 |
-| `TASK-049-F1` | Gom `parseOvrList` (runtime) + `validateOvrSpec` (config) về một helper chung | TASK-049 §6.1 |
+| Task | Nội dung | Nguồn | Trạng thái |
+|---|---|---|---|
+| `TASK-050` | Fail-closed khi `agent.lock` hỏng + quarantine `.corrupt-<ISO>` | TASK-047 §6.1 | **DONE** (v5) |
+| `TASK-051` | Hợp nhất `parseOvrList` + `validateOvrSpec` về một nguồn chuẩn | TASK-049 §6.1 | **DONE** (v5) |
+| `TASK-052` | Integration test hành vi cho nhánh thiếu do scan v5 phát hiện | Company Cycle scan v5 | **DONE** (v5) |
+| `TASK-048-F1` | `worker:resolve --quarantine` dọn state/lock hỏng có kiểm soát | TASK-047 §6.2 / TASK-048 §6.1 / TASK-050 §6 | Chưa làm (không chặn) |
+| `TASK-052-F1` | Mock frame/mini-app cho `checkInventoryIcons` retry + `INVENTORY_READ_UNCONFIRMED` | TASK-052 §6 | Chưa làm (không chặn) |
 
 ## 4. Done — 2026-11-13 (cycle v1)
 

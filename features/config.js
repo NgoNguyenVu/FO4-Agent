@@ -4,6 +4,7 @@
 const rawConfig = require("../config.json");
 const { validateSpendLimits } = require("../lib/spend-guard");
 const { createValidators } = require("../lib/config-validators");
+const { parseOvrSpec } = require("../lib/ovr-spec");
 
 const {
   requirePositiveInteger,
@@ -98,34 +99,14 @@ const config = {
 };
 
 // Kiểm tra sớm định dạng OVR trước khi mini-app mở: trước đây lỗi chỉ nổi ở
-// features/upgrade/patterns.parseOvrList() giữa phiên nâng cấp. Luật khớp parser
-// runtime: danh sách số nguyên dương, hoặc dải "a-b" với a <= b và tối đa 50.
+// features/upgrade/patterns.parseOvrList() giữa phiên nâng cấp. Từ TASK-051 cả
+// hai dùng chung lib/ovr-spec.js, nên config và runtime không thể lệch luật.
 function validateOvrSpec(raw) {
   requireNonEmptyString(raw, "upgrade.ovrPhoi");
-  for (const part of raw.split(",")) {
-    const trimmed = part.trim();
-    if (!trimmed) {
-      throw new Error(`Cấu hình upgrade.ovrPhoi có phần tử rỗng: "${raw}".`);
-    }
-    const range = trimmed.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (range) {
-      const from = Number(range[1]);
-      const to = Number(range[2]);
-      if (
-        !Number.isSafeInteger(from) ||
-        !Number.isSafeInteger(to) ||
-        from < 1 ||
-        to < 1 ||
-        from > to ||
-        to - from > 50
-      ) {
-        throw new Error(`Cấu hình upgrade.ovrPhoi có dải không hợp lệ: "${trimmed}".`);
-      }
-      continue;
-    }
-    if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed)) || Number(trimmed) < 1) {
-      throw new Error(`Cấu hình upgrade.ovrPhoi có giá trị không hợp lệ: "${trimmed}".`);
-    }
+  try {
+    parseOvrSpec(raw);
+  } catch (error) {
+    throw new Error(`Cấu hình upgrade.ovrPhoi không hợp lệ: ${error.message}`);
   }
 }
 
