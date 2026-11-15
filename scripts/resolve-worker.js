@@ -37,12 +37,14 @@ Tùy chọn:
                          Mặc định: "operator-verified-stopped".
   --state-dir <dir>      Thư mục chứa workers.json + agent.lock.
                          Mặc định: %LOCALAPPDATA%\\FO4PurchaseAgent\\state
+  --dry-run              Xem trước worker sẽ resolve; không ghi state.
   --json                 In kết quả dạng JSON (dùng cho script/CI).
   --help, -h             In hướng dẫn này.
 
 Mã thoát:
   0  thành công
-  1  lỗi nghiệp vụ (agent đang chạy, không tìm thấy worker, sai state)
+  1  lỗi nghiệp vụ (agent đang chạy, không tìm thấy worker, sai state,
+     hoặc resolve-all chỉ thành công một phần)
   2  sai tham số
 
 Lưu ý: dừng agent (Ctrl+C) và xác nhận trên Telegram không còn worker chạy
@@ -63,6 +65,7 @@ function parseArgs(argv) {
     note: "operator-verified-stopped",
     stateDir: null,
     json: false,
+    dryRun: false,
     help: false
   };
 
@@ -90,6 +93,8 @@ function parseArgs(argv) {
       options.note = next();
     } else if (arg === "--state-dir") {
       options.stateDir = next();
+    } else if (arg === "--dry-run") {
+      options.dryRun = true;
     } else if (arg === "--json") {
       options.json = true;
     } else {
@@ -170,6 +175,47 @@ function formatTable(workers) {
   );
 }
 
+// Resolve từng worker độc lập: một worker lỗi (state đổi giữa chừng, file bị
+// sửa) không được chặn các worker còn lại. Trả về cả resolved và failed để
+// caller in summary và chọn mã thoát.
+function resolveWorkers({ registry, workers, note, dryRun = false }) {
+  const resolved = [];
+  const failed = [];
+  for (const worker of workers) {
+    if (worker.state !== "unknown") {
+      failed.push({
+        workerId: worker.workerId,
+        code: "WORKER_STATE_INVALID",
+        message: `Worker ${worker.workerId} đang ${worker.state}; chỉ resolve được worker unknown.`
+      });
+      continue;
+    }
+    if (dryRun) {
+      resolved.push({ ...describeWorker(worker), wouldResolve: true });
+      continue;
+    }
+    try {
+      resolved.push(registry.resolveUnknown(worker.workerId, note));
+    } catch (error) {
+      failed.push({
+        workerId: worker.workerId,
+        code: error.code || "ERROR",
+        message: error.message
+      });
+    }
+  }
+  return { resolved, failed };
+}
+
+function restoreProcessBlock(statePath, previousProcess) {
+  const written = readJson(statePath);
+  if (!written || typeof written !== "object") return;
+  const next = { ...written };
+  if (previousProcess) next.process = previousProcess;
+  else delete next.process;
+  writeJsonAtomic(statePath, next);
+}
+
 function main(argv) {
   let options;
   try {
@@ -238,13 +284,86 @@ function main(argv) {
     return EXIT_OK;
   }
 
-  // Từ đây trở đi là thao tác ghi state.
+  // Từ đây trở đi là thao tác ghi state (trừ --dry-run).
   if (running) {
     console.error(
       "Từ chối resolve: agent vẫn đang chạy (process lock còn hiệu lực).\n" +
         "Dừng agent bằng Ctrl+C, xác nhận trên Telegram không còn worker, rồi chạy lại."
     );
     return EXIT_ERROR;
+  }
+
+  const targets =
+    options.action === "resolve"
+      ? workers.filter((worker) => worker.workerId === options.workerId)
+      : unknown;
+
+  if (options.action === "resolve" && !targets.length) {
+    const message = `Không tìm thấy worker ${options.workerId}.`;
+    if (options.json) {
+      console.log(JSON.stringify({ statePath, lockPath, error: message }, null, 2));
+    } else {
+      console.error(message);
+    }
+    return EXIT_ERROR;
+  }
+
+  if (options.action === "resolve-all" && !unknown.length) {
+    if (options.json) {
+      console.log(
+        JSON.stringify(
+          {
+            statePath,
+            lockPath,
+            dryRun: options.dryRun,
+            resolved: [],
+            failed: [],
+            message: "no-unknown-worker"
+          },
+          null,
+          2
+        )
+      );
+    } else {
+      console.log("Không có worker unknown; không cần resolve.");
+    }
+    return EXIT_OK;
+  }
+
+  if (options.dryRun) {
+    const { resolved: preview, failed } = resolveWorkers({
+      registry: null,
+      workers: targets,
+      note: options.note,
+      dryRun: true
+    });
+    if (options.json) {
+      console.log(
+        JSON.stringify(
+          {
+            statePath,
+            lockPath,
+            dryRun: true,
+            wouldResolve: preview.map(describeWorker),
+            failed
+          },
+          null,
+          2
+        )
+      );
+    } else {
+      console.log("Chế độ dry-run: không ghi state.");
+      for (const worker of preview) {
+        console.log(
+          `Sẽ resolve ${worker.workerId} (${worker.feature}): unknown -> stopped.`
+        );
+      }
+      for (const failure of failed) {
+        console.error(`Không thể resolve ${failure.workerId}: ${failure.message}`);
+      }
+      console.log("Chạy lại không có --dry-run để thực hiện.");
+    }
+    return failed.length ? EXIT_ERROR : EXIT_OK;
   }
 
   // CLI không phải agent: giữ nguyên block process cũ thay vì ghi pid của CLI
@@ -257,45 +376,25 @@ function main(argv) {
     logError: (message) => console.error(message)
   });
 
-  const resolved = [];
-  try {
-    if (options.action === "resolve") {
-      resolved.push(registry.resolveUnknown(options.workerId, options.note));
-    } else if (options.action === "resolve-all") {
-      if (!unknown.length) {
-        if (options.json) {
-          console.log(
-            JSON.stringify(
-              { statePath, lockPath, resolved: [], message: "no-unknown-worker" },
-              null,
-              2
-            )
-          );
-        } else {
-          console.log("Không có worker unknown; không cần resolve.");
-        }
-        return EXIT_OK;
-      }
-      for (const worker of unknown) {
-        resolved.push(registry.resolveUnknown(worker.workerId, options.note));
-      }
-    }
-  } catch (error) {
-    console.error(error.message);
-    return EXIT_ERROR;
-  }
+  const { resolved, failed } = resolveWorkers({
+    registry,
+    workers: targets,
+    note: options.note
+  });
 
-  if (previousProcess) {
-    const written = readJson(statePath);
-    if (written && typeof written === "object") {
-      writeJsonAtomic(statePath, { ...written, process: previousProcess });
-    }
-  }
+  // Kể cả khi resolve-all lỗi một phần, vẫn phải trả lại block process cũ:
+  // registry.saveState đã ghi pid của CLI vào state.
+  if (resolved.length) restoreProcessBlock(statePath, previousProcess);
 
   if (options.json) {
     console.log(
       JSON.stringify(
-        { statePath, lockPath, resolved: resolved.map(describeWorker) },
+        {
+          statePath,
+          lockPath,
+          resolved: resolved.map(describeWorker),
+          failed
+        },
         null,
         2
       )
@@ -306,13 +405,30 @@ function main(argv) {
         `Đã resolve ${worker.workerId} (${worker.feature}): unknown -> stopped (${worker.reason}).`
       );
     }
-    console.log("Khởi động lại agent và gửi /startagent khi đã sẵn sàng.");
+    for (const failure of failed) {
+      console.error(`Lỗi resolve ${failure.workerId}: ${failure.message}`);
+    }
+    if (failed.length) {
+      console.error(
+        `Đã resolve ${resolved.length}/${targets.length} worker; ${failed.length} lỗi. ` +
+          "Kiểm tra lại state rồi chạy lại cho các worker còn unknown."
+      );
+    } else {
+      console.log("Khởi động lại agent và gửi /startagent khi đã sẵn sàng.");
+    }
   }
-  return EXIT_OK;
+  return failed.length ? EXIT_ERROR : EXIT_OK;
 }
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2));
 }
 
-module.exports = { main, parseArgs, agentIsRunning, defaultStateDir };
+module.exports = {
+  main,
+  parseArgs,
+  agentIsRunning,
+  defaultStateDir,
+  resolveWorkers,
+  restoreProcessBlock
+};

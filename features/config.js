@@ -3,6 +3,14 @@
 // tạo phụ thuộc chéo giữa hai feature.
 const rawConfig = require("../config.json");
 const { validateSpendLimits } = require("../lib/spend-guard");
+const { createValidators } = require("../lib/config-validators");
+
+const {
+  requirePositiveInteger,
+  requireNonNegativeInteger,
+  requireBoolean,
+  requireNonEmptyString
+} = createValidators("Cấu hình ");
 
 const config = {
   ...rawConfig,
@@ -89,15 +97,46 @@ const config = {
   }
 };
 
-function requirePositiveInteger(value, name) {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`Cấu hình ${name} phải là số nguyên dương.`);
+// Kiểm tra sớm định dạng OVR trước khi mini-app mở: trước đây lỗi chỉ nổi ở
+// features/upgrade/patterns.parseOvrList() giữa phiên nâng cấp. Luật khớp parser
+// runtime: danh sách số nguyên dương, hoặc dải "a-b" với a <= b và tối đa 50.
+function validateOvrSpec(raw) {
+  requireNonEmptyString(raw, "upgrade.ovrPhoi");
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) {
+      throw new Error(`Cấu hình upgrade.ovrPhoi có phần tử rỗng: "${raw}".`);
+    }
+    const range = trimmed.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      const from = Number(range[1]);
+      const to = Number(range[2]);
+      if (
+        !Number.isSafeInteger(from) ||
+        !Number.isSafeInteger(to) ||
+        from < 1 ||
+        to < 1 ||
+        from > to ||
+        to - from > 50
+      ) {
+        throw new Error(`Cấu hình upgrade.ovrPhoi có dải không hợp lệ: "${trimmed}".`);
+      }
+      continue;
+    }
+    if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed)) || Number(trimmed) < 1) {
+      throw new Error(`Cấu hình upgrade.ovrPhoi có giá trị không hợp lệ: "${trimmed}".`);
+    }
   }
 }
 
-function requireNonNegativeInteger(value, name) {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`Cấu hình ${name} phải là số nguyên >= 0.`);
+// maxPriceEach được gõ nguyên văn vào ô "Giá tối đa" của mini-app, nên chỉ chấp
+// nhận dạng bot hiểu: số nguyên hoặc thập phân + hậu tố K/M/B tuỳ chọn.
+function validatePriceSpec(raw) {
+  requireNonEmptyString(raw, "upgrade.maxPriceEach");
+  if (!/^\d+(?:[.,]\d+)?\s*[KMB]?$/i.test(raw.trim())) {
+    throw new Error(
+      `Cấu hình upgrade.maxPriceEach không hợp lệ: "${raw}" (ví dụ hợp lệ: 2M, 500K, 2000000).`
+    );
   }
 }
 
@@ -160,9 +199,8 @@ function validateUpgradeConfig() {
     s.targetCheckIntervalSeconds,
     "upgrade.targetCheckIntervalSeconds"
   );
-  if (!s.ovrPhoi || !s.maxPriceEach) {
-    throw new Error("Cấu hình upgrade.ovrPhoi và upgrade.maxPriceEach không được trống.");
-  }
+  validateOvrSpec(s.ovrPhoi);
+  validatePriceSpec(s.maxPriceEach);
 }
 
 function validateIconBuyConfig() {
@@ -196,6 +234,7 @@ function validateIconBuyConfig() {
   if (typeof s.continuous !== "boolean") {
     throw new Error("iconBuy.continuous phải là true/false.");
   }
+  requireBoolean(s.monitorExistingOrders, "iconBuy.monitorExistingOrders");
   if (typeof s.captureTtcnBaseline !== "boolean") {
     throw new Error("iconBuy.captureTtcnBaseline phải là true/false.");
   }

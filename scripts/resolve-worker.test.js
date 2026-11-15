@@ -235,3 +235,118 @@ test("--help exits 0 and documents exit codes", () => {
   assert.match(result.stdout, /--resolve-all/);
   assert.match(result.stdout, /Mã thoát/);
 });
+
+test("--dry-run --resolve leaves state untouched and prints the plan", (t) => {
+  const dir = tempDir(t);
+  const registry = seedRegistry(dir);
+  const workerId = registry.beginStart({ feature: "buy" });
+  registry.markRunning(workerId);
+  registry.markUnknown(workerId, "browser-closed");
+  const before = fs.readFileSync(path.join(dir, "workers.json"), "utf8");
+
+  const result = run(["--state-dir", dir, "--resolve", workerId, "--dry-run"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /dry-run/);
+  assert.match(result.stdout, new RegExp(`Sẽ resolve ${workerId}`));
+  assert.equal(fs.readFileSync(path.join(dir, "workers.json"), "utf8"), before);
+});
+
+test("--dry-run --resolve-all previews every unknown worker without writing", (t) => {
+  const dir = tempDir(t);
+  const registry = seedRegistry(dir);
+  const first = registry.beginStart({
+    feature: "icon",
+    concurrencyGroup: "background"
+  });
+  registry.markRunning(first);
+  const second = registry.beginStart({ feature: "buy" });
+  registry.markRunning(second);
+  registry.markUnknown(first, "browser-closed");
+  registry.markUnknown(second, "browser-closed");
+  const before = fs.readFileSync(path.join(dir, "workers.json"), "utf8");
+
+  const result = run(["--state-dir", dir, "--resolve-all", "--dry-run"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(first));
+  assert.match(result.stdout, new RegExp(second));
+  assert.equal(fs.readFileSync(path.join(dir, "workers.json"), "utf8"), before);
+});
+
+test("--dry-run refuses a worker that is not unknown", (t) => {
+  const dir = tempDir(t);
+  const registry = seedRegistry(dir);
+  const workerId = registry.beginStart({ feature: "buy" });
+  registry.markRunning(workerId);
+
+  const result = run(["--state-dir", dir, "--resolve", workerId, "--dry-run"]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /chỉ resolve được worker unknown/);
+  assert.equal(readState(dir).workers[0].state, "running");
+});
+
+test("--dry-run --json emits wouldResolve and no mutation", (t) => {
+  const dir = tempDir(t);
+  const registry = seedRegistry(dir);
+  const workerId = registry.beginStart({ feature: "buy" });
+  registry.markRunning(workerId);
+  registry.markUnknown(workerId, "browser-closed");
+
+  const result = run(["--state-dir", dir, "--resolve-all", "--dry-run", "--json"]);
+  assert.equal(result.code, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.dryRun, true);
+  assert.equal(parsed.wouldResolve.length, 1);
+  assert.equal(parsed.wouldResolve[0].workerId, workerId);
+  assert.deepEqual(parsed.failed, []);
+  assert.equal(readState(dir).workers[0].state, "unknown");
+});
+
+test("resolveWorkers continues after a partial failure and reports it", () => {
+  const { resolveWorkers } = require("./resolve-worker");
+  const calls = [];
+  const fakeRegistry = {
+    resolveUnknown(workerId, note) {
+      calls.push({ workerId, note });
+      if (workerId === "bad") {
+        const error = new Error("Worker bad đang running; chỉ resolve được worker unknown.");
+        error.code = "WORKER_STATE_INVALID";
+        throw error;
+      }
+      return { workerId, feature: "buy", state: "stopped", reason: note };
+    }
+  };
+
+  const result = resolveWorkers({
+    registry: fakeRegistry,
+    workers: [
+      { workerId: "a", feature: "buy", state: "unknown" },
+      { workerId: "bad", feature: "buy", state: "unknown" },
+      { workerId: "c", feature: "upgrade", state: "unknown" }
+    ],
+    note: "operator-verified-stopped"
+  });
+
+  assert.deepEqual(result.resolved.map((worker) => worker.workerId), ["a", "c"]);
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].workerId, "bad");
+  assert.equal(result.failed[0].code, "WORKER_STATE_INVALID");
+  assert.deepEqual(calls.map((call) => call.workerId), ["a", "bad", "c"]);
+});
+
+test("restoreProcessBlock puts back or removes the previous process block", (t) => {
+  const { restoreProcessBlock } = require("./resolve-worker");
+  const dir = tempDir(t);
+  const statePath = path.join(dir, "workers.json");
+  const previous = { pid: 4321, token: "agent-token" };
+  fs.writeFileSync(
+    statePath,
+    JSON.stringify({ version: 1, process: { pid: 9999, token: "cli" }, workers: [] }),
+    "utf8"
+  );
+
+  restoreProcessBlock(statePath, previous);
+  assert.deepEqual(readState(dir).process, previous);
+
+  restoreProcessBlock(statePath, null);
+  assert.equal("process" in readState(dir), false);
+});

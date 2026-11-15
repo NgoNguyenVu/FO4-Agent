@@ -55,16 +55,20 @@ const {
   hasNewWorkerTokenStop
 } = require("./patterns");
 
-async function waitForStartAcknowledgement(page, baseline, rl, { ui = null } = {}) {
+async function waitForStartAcknowledgement(
+  page,
+  baseline,
+  rl,
+  { ui = null, timeoutMs = null } = {}
+) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
   // Bình thường bot ACK trong vài giây. Chỉ chờ tối đa 90s (hoặc cấu hình nếu
   // ngắn hơn) rồi xác minh /stop, thay vì treo cả 5 phút khi bot lag.
-  const waitMs = Math.min(
-    config.botResponseTimeoutMinutes * 60_000,
-    BUY_START_ACK_TIMEOUT_MS
-  );
-  const deadline = Date.now() + waitMs;
+  // `timeoutMs` chỉ dùng cho test/integration; production giữ nguyên mặc định.
+  const waitBudgetMs =
+    timeoutMs ?? Math.min(config.botResponseTimeoutMinutes * 60_000, BUY_START_ACK_TIMEOUT_MS);
+  const deadline = Date.now() + waitBudgetMs;
   let snapshot = reader.snapshot();
   while (Date.now() < deadline) {
     const fresh = baseline.text ? getFreshSince(baseline.text, snapshot.text) : null;
@@ -113,7 +117,7 @@ async function waitForStartAcknowledgement(page, baseline, rl, { ui = null } = {
   }
   if (status && !status.running) {
     const error = new Error(
-      `Bot chưa xác nhận bắt đầu sau ${Math.round(waitMs / 1_000)} giây và /stop ` +
+      `Bot chưa xác nhận bắt đầu sau ${Math.round(waitBudgetMs / 1_000)} giây và /stop ` +
         "xác nhận không có worker đang chạy; agent sẽ bấm lại nút Bắt đầu."
     );
     error.code = "START_ACK_TIMEOUT";
@@ -121,7 +125,7 @@ async function waitForStartAcknowledgement(page, baseline, rl, { ui = null } = {
     throw error;
   }
   const error = new Error(
-    `Bot chưa xác nhận bắt đầu trong ${Math.round(waitMs / 1_000)} giây và chưa ` +
+    `Bot chưa xác nhận bắt đầu trong ${Math.round(waitBudgetMs / 1_000)} giây và chưa ` +
       "xác minh được trạng thái worker; agent dừng để tránh mua chồng." +
       (verifyError ? ` Lỗi /stop: ${verifyError.message}` : "")
   );

@@ -1191,5 +1191,8 @@ async function runIconBuy(page, rl, {
 }
 
 module.exports = {
-  runIconBuy
+  runIconBuy,
+  // Export cho integration test TASK-045: khoá hành vi retry khi /stop chưa
+  // đọc được. Không phải API runtime (controller chỉ dùng runIconBuy).
+  captureStopBaselineWithRetry
 };
