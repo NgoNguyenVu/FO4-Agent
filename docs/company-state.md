@@ -1,26 +1,36 @@
 # Company State
 
-- **Cập nhật:** 2026-11-15 (Cycle v5 — đóng cycle)
+- **Cập nhật:** 2026-11-16 (Cycle v6 — sửa lỗi live ICON/TTCN, đóng cycle)
 - **Người cập nhật:** Manager Agent (Engineering Director)
-- **Current Sprint:** Cycle v5 — Reliability + Architecture + Integration tests
-- **Branch:** `ai/auto-cycle-v5` (tách từ `main` `1f75097`; push nhánh phụ để tạo PR, không đụng `main`)
-- **Company Delivery Status:** **3 task DONE (cycle v5)** — TASK-050 (agent.lock fail-closed), TASK-051 (hợp nhất OVR), TASK-052 (integration test từ scan). Reviewer APPROVED + QA PASS; Gate A toàn bộ.
-- **Active Cycle Status:** **CYCLE v5 COMPLETE** — `npm test` **374/374**; `scan:secrets` + `scan:history` pass.
-- **Current Task:** _(không có)_ — cycle v5 đã đóng
-- **Task Status:** **DONE (cycle v5)**
-- **Reviewer:** **APPROVED** — TASK-050, TASK-051, TASK-052 — 2026-11-15
-- **QA:** **PASS** — TASK-050 (374/374), TASK-051 (374/374), TASK-052 (374/374)
+- **Current Sprint:** Cycle v6 — ICON/TTCN live bug fix
+- **Branch:** `ai/auto-cycle-v6` (tách từ `main` `a2c6e18`; push nhánh phụ để tạo PR, không đụng `main`)
+- **Company Delivery Status:** **3 task DONE (cycle v6)** — TASK-053 (hủy TTCN không lệch index), TASK-054 (quét toàn bộ + nhận ICON, loại PHÔI), TASK-055 (nhận xong pivot mua phôi + nâng). Reviewer APPROVED + QA PASS; Gate A (88/100).
+- **Active Cycle Status:** **CYCLE v6 COMPLETE** — `npm test` **382/382**; `scan:secrets` + `scan:history` pass.
+- **Current Task:** _(không có)_ — cycle v6 đã đóng
+- **Task Status:** **DONE (cycle v6)**
+- **Reviewer:** **APPROVED** — TASK-053/054/055 — 2026-11-16
+- **QA:** **PASS** — TASK-053/054/055 (382/382) — 2026-11-16
 - **Parallel Security Task:** TASK-025 — **ACCEPTED RISK APPROVED** (không có credential production)
 - **Blocked Task:** _(không có)_
 - **Authorization Required:** _(không có)_
 - **WONT_DO (Owner 2026-11-15):** `TASK-003 Stage B` (hard cap/live gate) và `TASK-039` (`purchaseTimeoutSeconds`) — Owner xác nhận không có nhu cầu triển khai; **không nhắc lại ở các cycle sau**.
-- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v5`)
+- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v6`)
 - **Push Allowed:** Chỉ nhánh `ai/*` (phục vụ PR); **không push `main`**
 - **Merge Allowed:** NO
 - **Live Run Allowed:** NO
 - **Security Risk Acceptance:** TASK-025 — **APPROVED**; TASK-026 — **APPROVED** (force push lịch sử cũ).
 
-## 0. Cycle 2026-11-15 v5 — Reliability + Architecture + Integration tests
+## 0. Cycle 2026-11-16 v6 — ICON/TTCN live bug fix
+
+| Task | Deliverable | Trạng thái | Gate |
+|---|---|---|---|
+| `TASK-053` | Hủy TTCN theo `orderId`; đọc lại toàn bộ danh sách sau mỗi lần hủy; xóa đơn 27 không bỏ sót đơn 4 + 5 test | **DONE** | A (88) |
+| `TASK-054` | Quét toàn bộ TTCN (cuộn + gộp trang); nhận ICON "Nhận"; loại PHÔI "Nhận" + 3 test | **DONE** | A (88) |
+| `TASK-055` | `onIconReceived` → `iconReceivePivotPlan` → kiểm tra kho → mua phôi + nâng cấp + 2 test | **DONE** | A (88) |
+
+Chi tiết: [`docs/completed/CYCLE-2026-11-16-v6.md`](completed/CYCLE-2026-11-16-v6.md).
+
+## 0z. Cycle 2026-11-15 v5 — Reliability + Architecture + Integration tests
 
 | Task | Deliverable | Trạng thái | Gate |
 |---|---|---|---|
@@ -155,11 +165,11 @@ TASK-001 chỉ được đóng khi **B1–B9** đóng và có security sign-off.
 
 | Mảng | Trạng thái | Ghi chú |
 |---|---|---|
-| Engineering | **Ổn định, đã hardening thêm** | Cycle v5 đóng 3 task (lock/OVR/test); không merge/release/live |
+| Engineering | **Ổn định, đã hardening thêm** | Cycle v6 sửa 3 lỗi live ICON/TTCN; không merge/release/live |
 | Security | **Đã đóng remediation** | TASK-001 DONE; history sạch; scan:secrets/staged/history pass |
 | Release | **Blocked** | Không chạy live, không merge thay đổi lớn |
-| Task board | **Cycle v5 COMPLETE — 3 task DONE** | TASK-050 (agent.lock), TASK-051 (OVR), TASK-052 (integration test scan). WONT_DO: TASK-003 Stage B, TASK-039. |
-| Bàn giao tiếp theo | `worker:resolve --quarantine` (không chặn) | Sau đó: mock frame cho `checkInventoryIcons` |
+| Task board | **Cycle v6 COMPLETE — 3 task DONE** | TASK-053 (hủy TTCN), TASK-054 (nhận ICON), TASK-055 (pivot phôi + nâng). WONT_DO: TASK-003 Stage B, TASK-039. |
+| Bàn giao tiếp theo | Mock frame cho `checkInventoryIcons` (TASK-052-F1) | Không chặn |
 
 ## 4b. Quyết định của Owner — 2026-11-15
 
@@ -179,8 +189,8 @@ TASK-001 chỉ được đóng khi **B1–B9** đóng và có security sign-off.
 
 ## 6. Next Action
 
-1. **Theo dõi PR** của `ai/auto-cycle-v5` (không merge vào `main` khi chưa có quyết định).
-2. **Follow-up không chặn:** `worker:resolve --quarantine` (TASK-048-F1); mock frame cho `checkInventoryIcons` (TASK-052-F1).
+1. **Theo dõi PR** của `ai/auto-cycle-v6` (không merge vào `main` khi chưa có quyết định).
+2. **Follow-up không chặn:** mock frame cho `checkInventoryIcons` (TASK-052-F1); nếu mini-app virtualize DOM thì cuộn tới card trước khi click.
 3. **Không nhắc lại:** TASK-003 Stage B và TASK-039 (WONT_DO từ 2026-11-15).
 
-**STOP CONDITION: YES** — cycle v5 đóng 3 task (Gate A toàn bộ, 374/374 test, scan pass). Chỉ còn follow-up không chặn.
+**STOP CONDITION: YES** — cycle v6 đóng 3 task (Gate A, 382/382 test, scan pass). Chỉ còn follow-up không chặn.

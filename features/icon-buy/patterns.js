@@ -214,6 +214,128 @@ function parseTtcnCardText(text) {
   };
 }
 
+// Khóa ổn định cho một dòng TTCN. orderId là duy nhất; card thiếu orderId thì
+// dùng tổ hợp nội dung để tránh nhân bản khi đọc nhiều trang cuộn.
+function ttcnOrderKey(order) {
+  if (!order) return "";
+  if (order.orderId) return `id:${order.orderId}`;
+  return `row:${order.spid}:${order.orderType}:${order.action}:${order.text || ""}`;
+}
+
+// Gộp nhiều lần đọc #cancelList thành một danh sách đầy đủ, bỏ trùng theo
+// orderId. Mini-app chỉ render các dòng đang nhìn thấy, nên phải cuộn và gộp
+// nhiều trang mới thấy được các đơn nằm từ hàng thứ 3 trở xuống.
+function mergeTtcnOrderPages(pages) {
+  const seen = new Set();
+  const merged = [];
+  for (const page of pages || []) {
+    for (const order of page || []) {
+      if (!order) continue;
+      const key = ttcnOrderKey(order);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(order);
+    }
+  }
+  return merged;
+}
+
+// Lập kế hoạch hủy độc lập với chỉ số dòng. Mỗi target (đơn đã xác nhận vị trí
+// xấu) được ánh xạ tới đúng card theo orderId; nếu orderId đã biến mất khỏi
+// TTCN (đơn trước bị xóa) thì fallback sang card Hủy mới nhất cùng mã/grade.
+// Nhờ vậy khi đơn 27 bị xóa, đơn 4 kế tiếp vẫn được nhận diện thay vì lệch
+// index hoặc kẹt ở trạng thái "không tìm thấy".
+// Caller hủy plan[0], đọc lại toàn bộ danh sách rồi gọi lại hàm này.
+function planTtcnCancellations(orders, targets, knownOrderIds = null) {
+  const list = (orders || []).filter(
+    (order) =>
+      order &&
+      order.orderId &&
+      Number(order.orderType) === 1 &&
+      /Hủy/i.test(String(order.action || ""))
+  );
+  const claimed = new Set();
+  const plan = [];
+  for (const target of targets || []) {
+    if (!target) continue;
+    const code = String(target.code);
+    const explicitId =
+      target.orderId != null && target.orderId !== ""
+        ? String(target.orderId)
+        : null;
+    let order = null;
+    if (explicitId) {
+      order =
+        list.find(
+          (item) => item.orderId === explicitId && !claimed.has(item.orderId)
+        ) || null;
+    }
+    if (!order) {
+      const candidates = list.filter((item) => {
+        if (claimed.has(item.orderId)) return false;
+        if (String(item.spid) !== code) return false;
+        if (
+          target.grade != null &&
+          item.grade != null &&
+          Number(item.grade) !== Number(target.grade)
+        ) {
+          return false;
+        }
+        return true;
+      });
+      // Ưu tiên đơn không nằm trong baseline (đơn mới của phiên). Nếu chỉ còn
+      // đơn đã có trong baseline, vẫn chọn: target đến từ log đặt mua của
+      // chính phiên này nên đó là đơn cần hủy, không được bỏ sót.
+      const fresh = knownOrderIds
+        ? candidates.filter((item) => !knownOrderIds.has(item.orderId))
+        : candidates;
+      order = (fresh.length ? fresh : candidates).at(-1) || null;
+    }
+    if (!order) continue;
+    claimed.add(order.orderId);
+    plan.push({ target, order });
+  }
+  // Hủy theo thứ tự xuất hiện trên TTCN (trên xuống) để mỗi lần đọc lại không
+  // bị lệch bởi các dòng đã biến mất.
+  const rowIndex = new Map(list.map((order, index) => [order.orderId, index]));
+  plan.sort(
+    (a, b) =>
+      (rowIndex.get(a.order.orderId) ?? 0) -
+      (rowIndex.get(b.order.orderId) ?? 0)
+  );
+  return plan;
+}
+
+function isReceiveAction(action) {
+  return /Nhận/i.test(String(action || ""));
+}
+
+// Quét TOÀN BỘ dòng TTCN để tìm thẻ ICON đã mua xong (nút "Nhận"). Chỉ nhận
+// mùa ICON thuần: dòng PHÔI (26TOTS, TKI, ICONTM...) cũng có nút "Nhận" nhưng
+// tuyệt đối không được bấm. Không phụ thuộc vị trí dòng nên đơn nằm từ hàng
+// thứ 3 trở xuống vẫn được xử lý.
+function selectIconOrdersToReceive(orders, { players = null, grade = null } = {}) {
+  const wanted =
+    players && players.length
+      ? new Set(players.map((player) => String(player?.code ?? player)))
+      : null;
+  return (orders || []).filter((order) => {
+    if (!order || !order.orderId) return false;
+    if (Number(order.orderType) !== 1) return false;
+    if (!isReceiveAction(order.action)) return false;
+    if (!isIconSeason(order.season)) return false;
+    if (wanted && !wanted.has(String(order.spid))) return false;
+    if (
+      grade != null &&
+      order.grade != null &&
+      Number(order.grade) !== Number(grade)
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
 // Chọn đúng đơn mới để hủy. orderId có trong baseline là đơn cũ, tuyệt đối
 // không chọn. Nếu baseline không đọc được, chỉ chọn card khớp mã + grade và
 // đang có nút Hủy; caller phải ghi cảnh báo để người dùng biết rủi ro.
@@ -302,6 +424,11 @@ module.exports = {
   parseRetryAfterSeconds,
   parseCompactBp,
   parseTtcnCardText,
+  ttcnOrderKey,
+  mergeTtcnOrderPages,
+  planTtcnCancellations,
+  isReceiveAction,
+  selectIconOrdersToReceive,
   selectOrderToCancel,
   selectMonitoredIconTasks,
   getPositionAction,

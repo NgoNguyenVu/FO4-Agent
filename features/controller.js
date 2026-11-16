@@ -80,6 +80,7 @@ const {
   stopUpgradeWorker
 } = require("./upgrade");
 const { runIconBuy } = require("./icon-buy");
+const { iconReceivePivotPlan } = require("./upgrade/receive-pivot");
 
 async function restoreTelegramSession(context, page, rl, onCommand) {
   ({ context, page } = await openTelegramPage(context, page));
@@ -163,7 +164,20 @@ async function main() {
     iconStopRequested = false;
     iconMonitor = runIconBuy(page, rl, {
       ui,
-      isStopRequested: () => iconStopRequested || remoteResetRequested
+      isStopRequested: () => iconStopRequested || remoteResetRequested,
+      // ICON vừa nhận từ TTCN phải vào kho ngay: bỏ qua nhịp chờ 30 phút để
+      // vòng chính kiểm tra kho rồi chuyển sang mua phôi + nâng cấp.
+      onIconReceived: (received) => {
+        const plan = iconReceivePivotPlan(received);
+        if (!plan) return;
+        inventoryKnownAvailable = plan.inventoryKnownAvailable;
+        nextInventoryCheckAt = plan.nextInventoryCheckAt;
+        log(
+          `Đã nhận ${plan.codes.length} ICON từ TTCN` +
+            `${plan.codes.length ? ` (${plan.codes.join(", ")})` : ""}; ` +
+            "ép kiểm tra kho ngay để mua phôi + nâng cấp."
+        );
+      }
     })
       .then((result) => {
         if (!iconStopRequested && result?.action !== "stop") {

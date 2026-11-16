@@ -1,18 +1,28 @@
 # Current Queue
 
-- **Cập nhật:** 2026-11-15 (Cycle v5 — Reliability + Architecture + Integration tests)
-- **Branch làm việc:** `ai/auto-cycle-v5` — **không đụng `main`**
-- **Sprint:** Cycle v5 — Reliability + Architecture + Integration tests
-- **Company Status:** **CYCLE v5 COMPLETE** — 3 task DONE (TASK-050, TASK-051, TASK-052); Reviewer APPROVED + QA PASS; Gate A toàn bộ
-- **Active Task:** _(không có — cycle v5 đã đóng)_
-- **Current Focus:** Theo dõi PR của `ai/auto-cycle-v5`; follow-up không chặn: `worker:resolve --quarantine`, mock frame cho `checkInventoryIcons`
-- **Repo:** branch `ai/auto-cycle-v5` tách từ `main` `1f75097`; push nhánh phụ để tạo PR, **không push `main`**
+- **Cập nhật:** 2026-11-16 (Cycle v6 — sửa lỗi live ICON/TTCN)
+- **Branch làm việc:** `ai/auto-cycle-v6` — **không đụng `main`**
+- **Sprint:** Cycle v6 — ICON/TTCN live bug fix (hủy đơn lệch index, nhận ICON, pivot mua phôi + nâng)
+- **Company Status:** **CYCLE v6 COMPLETE** — 3 task DONE (TASK-053, TASK-054, TASK-055); Reviewer APPROVED + QA PASS; Gate A (88/100)
+- **Active Task:** _(không có — cycle v6 đã đóng)_
+- **Current Focus:** Theo dõi PR của `ai/auto-cycle-v6`; follow-up không chặn: virtualized TTCN scroll, mock frame cho `checkInventoryIcons`
+- **Repo:** branch `ai/auto-cycle-v6` tách từ `main` `a2c6e18`; push nhánh phụ để tạo PR, **không push `main`**
 - **Freeze:** Không merge/release/live. Commit chỉ trên nhánh cycle.
 - **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed, lịch sử cũ).
-- **Residual risk:** `npm test` **374/374** trên nhánh cycle. `agent.lock` hỏng đã fail-closed; OVR đã hợp nhất. Còn: `checkInventoryIcons` retry chưa có mock frame.
+- **Residual risk:** `npm test` **382/382** trên nhánh cycle. ICON/TTCN đã hủy theo `orderId` và nhận đúng ICON; còn: `checkInventoryIcons` retry chưa có mock frame.
 - **Owner Decision (2026-11-15):** `TASK-003 Stage B` và `TASK-039` → **WONT_DO** — Owner xác nhận không có nhu cầu triển khai; **không nhắc lại ở các cycle sau**.
 
-## 0. Cycle 2026-11-15 v5 — Reliability + Architecture + Integration tests (COMPLETE)
+## 0. Cycle 2026-11-16 v6 — ICON/TTCN live bug fix (COMPLETE)
+
+| Task | Nội dung | Trạng thái | Gate | Record |
+|---|---|---|---|---|
+| `TASK-053` | Hủy TTCN theo `orderId`; xóa đơn 27 không làm lệch/bỏ sót đơn 4 | **DONE** | A (88/100) | [completed](completed/TASK-053-ttcn-pending-order-rescan.md) |
+| `TASK-054` | Quét toàn bộ TTCN; nhận ICON "Nhận"; loại PHÔI "Nhận" | **DONE** | A (88/100) | [completed](completed/TASK-054-ttcn-icon-receive-scan.md) |
+| `TASK-055` | Nhận ICON xong tự chuyển mua phôi + nâng cấp | **DONE** | A (88/100) | [completed](completed/TASK-055-icon-receive-auto-pivot.md) |
+
+Tổng kết cycle: [`docs/completed/CYCLE-2026-11-16-v6.md`](completed/CYCLE-2026-11-16-v6.md).
+
+## 0z. Cycle 2026-11-15 v5 — Reliability + Architecture + Integration tests (COMPLETE)
 
 | Task | Nội dung | Trạng thái | Gate | Record |
 |---|---|---|---|---|
