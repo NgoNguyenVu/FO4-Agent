@@ -1,11 +1,20 @@
 # Roadmap — FO4-Agent
 
-- **Cập nhật:** 2026-11-15 (cycle v5 — Reliability + Architecture + Integration tests; đóng TASK-050/051/052; xem `docs/completed/CYCLE-2026-11-15-v5.md`)
+- **Cập nhật:** 2026-11-16 (cycle v6 — ICON/TTCN live bug fix; đóng TASK-053/054/055; xem `docs/completed/CYCLE-2026-11-16-v6.md`)
 - **Người lập:** Architect Agent; cập nhật bởi Manager Agent
 - **Nguồn dữ liệu:** `docs/backlog.md` + Cortex MCP (`cortex_code_search`, `cortex_code_context`, `cortex_detect_changes`, `cortex_code_impact`).
 - **Trạng thái:** Roadmap đề xuất, chưa cam kết ngày cứng. Thời lượng là ước tính cho một team nhỏ.
 
-## 0. Cập nhật cycle 2026-11-15
+## 0. Cập nhật cycle 2026-11-16
+
+### 0.1. Cycle v6 — ICON/TTCN live bug fix (2026-11-16)
+
+- **Đã xong:** TASK-053 (hủy TTCN theo `orderId`, không lệch index khi đơn trước bị xóa, Gate A 88), TASK-054 (quét toàn bộ danh sách + nhận ICON "Nhận" loại PHÔI, Gate A 88), TASK-055 (nhận ICON → pivot mua phôi + nâng cấp, Gate A 88). `npm test` **382/382**.
+- **WONT_DO (Owner 2026-11-15):** TASK-003 Stage B; TASK-039 `purchaseTimeoutSeconds = 0` — không nhắc lại.
+- **Follow-up không chặn:** mock frame cho `checkInventoryIcons`; cuộn tới card nếu mini-app virtualize DOM.
+- **Điều kiện:** không merge/push `main`; cycle v6 chỉ push `ai/auto-cycle-v6` để tạo PR.
+
+## 0z. Cập nhật cycle 2026-11-15
 
 ### 0.1. Cycle v5 — Reliability + Architecture + Integration tests (2026-11-15)
 

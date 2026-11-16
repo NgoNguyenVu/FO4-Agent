@@ -18,7 +18,7 @@ const { log } = require("../agent-log");
 const { lookupFavoriteIconPlayers } = require("./favorites");
 const { placeIconOrders, waitForPurchaseResults } = require("./order");
 const { getVisibleMessageIds } = require("./chat-messages");
-const { captureTtcnBaseline, cancelIconOrders } = require("./ttcn");
+const { captureTtcnBaseline, cancelIconOrders, receiveIconOrders } = require("./ttcn");
 const { hardReloadTelegram } = require("../telegram-io");
 const {
   captureStopTaskBaseline,
@@ -43,6 +43,10 @@ const CANCEL_PENDING_MAX_BACKOFF_MS = 1_800_000;
 // Telegram. Với backoff tối đa 5 phút, 8 lần tương đương ~30-40 phút kẹt; không
 // để agent lặp vô hạn như log 01:48-03:43 (hơn 2 giờ chỉ đọc được 0 bubble).
 const STOP_READ_MAX_FAILURES = 8;
+// Nhịp quét TTCN tìm thẻ ICON đã mua xong (nút "Nhận"). Đơn đã khớp có thể
+// không có thông báo chat, nên phải chủ động quét toàn bộ danh sách. Khi chưa
+// mua ICON nào trong phiên thì giãn ra để tránh mở mini-app quá nhiều.
+const RECEIVE_SCAN_INTERVAL_MS = 120_000;
 
 function pendingCancelKey(item) {
   return `${item.code}:${item.orderId || item.position || ""}`;
@@ -444,7 +448,8 @@ async function runIconBuy(page, rl, {
   pickPlayers = null,
   isStopRequested = null,
   ui = null,
-  onPurchaseSuccess = null
+  onPurchaseSuccess = null,
+  onIconReceived = null
 } = {}) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
@@ -473,10 +478,14 @@ async function runIconBuy(page, rl, {
   // vì gửi /stop mỗi 15s.
   let stopReadBackoffMs = config.iconBuy.slotPollSeconds * 1_000;
   let stopReadFailures = 0;
+  // Số ICON đã bấm "Nhận" trong TTCN ở phiên này.
+  let receivedIcons = 0;
+  let nextReceiveScanAt = 0;
 
   // Khi phiên kết thúc (kể cả lỗi), chỉ dừng các task do chính phiên này tạo.
   // Task có trong baseline đầu tiên không bao giờ bị đụng.
   const finish = async (result) => {
+    const enriched = { ...result, received: receivedIcons };
     if (pendingCancels.size) {
       log(
         `Kết thúc phiên còn ${pendingCancels.size} đơn vị trí xấu chưa hủy được (` +
@@ -489,7 +498,7 @@ async function runIconBuy(page, rl, {
           "); cần kiểm tra TTCN thủ công."
       );
     }
-    if (!sessionPlayers.size || !sessionTaskBaseline) return result;
+    if (!sessionPlayers.size || !sessionTaskBaseline) return enriched;
     const stopped = await stopOrphanIconTasks(
       page,
       rl,
@@ -497,10 +506,10 @@ async function runIconBuy(page, rl, {
       [...sessionPlayers.values()],
       ui
     );
-    if (stopped?.failed?.length && result.action !== "stop") {
-      return { ...result, action: "error", reason: "icon-task-stop-failed" };
+    if (stopped?.failed?.length && enriched.action !== "stop") {
+      return { ...enriched, action: "error", reason: "icon-task-stop-failed" };
     }
-    return result;
+    return enriched;
   };
 
   // Khi bot gửi "Vị trí mua" muộn cho một đơn cũ (không còn trong /stop), hàm
@@ -570,9 +579,49 @@ async function runIconBuy(page, rl, {
     return late.canceled;
   };
 
+  // Chủ động quét TTCN tìm thẻ ICON đã mua xong (nút "Nhận"). Đơn khớp có thể
+  // không có thông báo chat, nên không được chỉ dựa vào log. Sau khi nhận, gọi
+  // onIconReceived để controller ép kiểm tra kho và chuyển sang mua phôi +
+  // nâng cấp ngay. Lỗi mở mini-app chỉ log, không làm chết luồng ICON.
+  const scanReceivedIcons = async () => {
+    if (typeof onIconReceived !== "function") return 0;
+    if (Date.now() < nextReceiveScanAt) return 0;
+    nextReceiveScanAt =
+      Date.now() +
+      (sessionPlayers.size ? RECEIVE_SCAN_INTERVAL_MS : RECEIVE_SCAN_INTERVAL_MS * 5);
+    let result;
+    try {
+      result = await withUi(ui, () =>
+        receiveIconOrders(page, rl, {
+          grade: config.iconBuy.grade,
+          quantity: config.iconBuy.quantity
+        })
+      );
+    } catch (error) {
+      log(`Chưa quét được ICON đã mua trong TTCN: ${error.message}`);
+      return 0;
+    }
+    if (!result?.received?.length) return 0;
+    receivedIcons += result.received.length;
+    log(
+      `Đã nhận ${result.received.length} ICON đã mua từ TTCN (` +
+        `${result.received.map((item) => item.spid || item.code).join(", ")}); ` +
+        "chuyển sang mua phôi + nâng cấp."
+    );
+    await onIconReceived(result.received);
+    return result.received.length;
+  };
+
   while (true) {
     if (stopSignal()) {
       log("Nhận lệnh dừng; dừng luồng ICON, giữ nguyên worker Auto Mua/Auto Nâng.");
+      return finish({ action: "stop", batches, purchased, canceled });
+    }
+
+    // Nhận ICON đã khớp trước khi đọc /stop: đơn đã mua xong không còn chiếm
+    // slot chờ, và cần chuyển ngay sang mua phôi + nâng cấp.
+    await scanReceivedIcons();
+    if (stopSignal()) {
       return finish({ action: "stop", batches, purchased, canceled });
     }
 
@@ -704,6 +753,16 @@ async function runIconBuy(page, rl, {
         sessionTtcnBaselineIds = knownOrderIds;
       }
       if (config.iconBuy.monitorExistingOrders !== false) {
+        const configuredMonitorMs =
+          config.iconBuy.monitorWaitSeconds > 0
+            ? config.iconBuy.monitorWaitSeconds * 1_000
+            : Infinity;
+        // Chia nhịp theo dõi để vòng chính quay lại quét "Nhận" thường xuyên;
+        // nếu không, đơn khớp xong có thể nằm chờ tới 15 phút mới được nhận.
+        const monitorSliceMs =
+          typeof onIconReceived === "function"
+            ? Math.min(configuredMonitorMs, RECEIVE_SCAN_INTERVAL_MS)
+            : configuredMonitorMs;
         const monitored = await monitorExistingOrders(
           page,
           reader,
@@ -714,10 +773,7 @@ async function runIconBuy(page, rl, {
           sessionTtcnBaselineIds,
           ui,
           {
-            maxWaitMs:
-              config.iconBuy.monitorWaitSeconds > 0
-                ? config.iconBuy.monitorWaitSeconds * 1_000
-                : Infinity,
+            maxWaitMs: monitorSliceMs,
             triedPositions: monitorTriedPositions,
             // Quét cả đơn của các lượt trước dù task đã kết thúc.
             sessionPlayers: [...sessionPlayers.values()],

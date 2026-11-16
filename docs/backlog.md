@@ -1,6 +1,11 @@
 # Backlog CTO — FO4-Agent
 
-- **Cập nhật:** 2026-11-15 (cycle v5 — đóng TASK-050/051/052; WONT_DO TASK-003 Stage B / TASK-039)
+- **Cập nhật:** 2026-11-16 (cycle v6 — sửa lỗi live ICON/TTCN; đóng TASK-053/054/055)
+- **Thay đổi cycle 2026-11-16 v6:**
+  - `TASK-053` P0 → **DONE**: hủy TTCN theo `orderId`, đọc lại toàn bộ danh sách sau mỗi lần hủy; xóa đơn 27 không bỏ sót đơn 4 (5 test). Gate A (88/100).
+  - `TASK-054` P0 → **DONE**: quét toàn bộ TTCN (cuộn + gộp trang), nhận ICON "Nhận", loại PHÔI "Nhận" (3 test). Gate A (88/100).
+  - `TASK-055` P0 → **DONE**: nhận ICON xong tự chuyển mua phôi + nâng cấp qua `onIconReceived`/`iconReceivePivotPlan` (2 test). Gate A (88/100).
+  - **Follow-up còn lại (không chặn):** mock frame cho `checkInventoryIcons`; cuộn tới card nếu mini-app virtualize DOM.
 - **Quyết định Owner 2026-11-15:**
   - `TASK-003 Stage B` (hard cap/live gate) → **WONT_DO** — Owner xác nhận không có nhu cầu triển khai.
   - `TASK-039` (`purchaseTimeoutSeconds = 0`) → **WONT_DO** — Owner chấp nhận hành vi hiện tại.
