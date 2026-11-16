@@ -2469,7 +2469,10 @@ test("ICON monitor is bounded and catches late position logs", () => {
     "utf8"
   );
   assert.match(ttcnSrc, /openTtcnList\(page, rl, \{ attempts: 1 \}\)/);
-  assert.match(ttcnSrc, /refreshMenu: true, attempts: 1/);
+  // Cycle v7: hủy + nhận dùng CHUNG một lần mở TTCN, chỉ 1 attempt, không
+  // refreshMenu để không gửi /tn lặp mỗi kỳ monitor.
+  assert.match(ttcnSrc, /refreshMenu: false,\s*attempts: 1/);
+  assert.match(ttcnSrc, /async function maintainTtcnOrders\(/);
   // Lượt mở đầu tiên phải dùng nút "Auto Mua Phôi" cũ nếu còn hiển thị; chỉ
   // lần mở lại (iframe trắng) hoặc E002 mới được gửi /tn. Trước đây mỗi lượt dò
   // TTCN/hủy đơn đều gửi /tn dù không cần (log 05:34, 05:36, 05:47).

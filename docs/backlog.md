@@ -1,6 +1,10 @@
 # Backlog CTO — FO4-Agent
 
-- **Cập nhật:** 2026-11-16 (cycle v6 — sửa lỗi live ICON/TTCN; đóng TASK-053/054/055)
+- **Cập nhật:** 2026-11-16 (cycle v7 — gộp nhận ICON vào lần mở TTCN của monitor; đóng TASK-056)
+- **Thay đổi cycle 2026-11-16 v7:**
+  - `TASK-056` P0 → **DONE**: một lần mở TTCN vừa hủy đơn "Hủy" vừa quét/nhận ICON "Nhận" (`runTtcnMaintenance` + `maintainTtcnOrders`); xóa `RECEIVE_SCAN_INTERVAL_MS`/`scanReceivedIcons`/`nextReceiveScanAt`; giữ pivot `iconReceivePivotPlan` (4 test mới). Gate A (89/100).
+  - **Đánh đổi:** ICON khớp được nhận trong kỳ monitor kế tiếp (tối đa 15 phút) thay vì 2 phút; TTCN chỉ mở một lần mỗi kỳ.
+  - **Follow-up còn lại (không chặn):** mock frame cho `checkInventoryIcons`; cuộn tới card nếu mini-app virtualize DOM.
 - **Thay đổi cycle 2026-11-16 v6:**
   - `TASK-053` P0 → **DONE**: hủy TTCN theo `orderId`, đọc lại toàn bộ danh sách sau mỗi lần hủy; xóa đơn 27 không bỏ sót đơn 4 (5 test). Gate A (88/100).
   - `TASK-054` P0 → **DONE**: quét toàn bộ TTCN (cuộn + gộp trang), nhận ICON "Nhận", loại PHÔI "Nhận" (3 test). Gate A (88/100).

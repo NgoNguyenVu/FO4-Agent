@@ -1,18 +1,26 @@
 # Current Queue
 
-- **Cập nhật:** 2026-11-16 (Cycle v6 — sửa lỗi live ICON/TTCN)
-- **Branch làm việc:** `ai/auto-cycle-v6` — **không đụng `main`**
-- **Sprint:** Cycle v6 — ICON/TTCN live bug fix (hủy đơn lệch index, nhận ICON, pivot mua phôi + nâng)
-- **Company Status:** **CYCLE v6 COMPLETE** — 3 task DONE (TASK-053, TASK-054, TASK-055); Reviewer APPROVED + QA PASS; Gate A (88/100)
-- **Active Task:** _(không có — cycle v6 đã đóng)_
-- **Current Focus:** Theo dõi PR của `ai/auto-cycle-v6`; follow-up không chặn: virtualized TTCN scroll, mock frame cho `checkInventoryIcons`
-- **Repo:** branch `ai/auto-cycle-v6` tách từ `main` `a2c6e18`; push nhánh phụ để tạo PR, **không push `main`**
+- **Cập nhật:** 2026-11-16 (Cycle v7 — gộp nhận ICON vào lần mở TTCN của monitor)
+- **Branch làm việc:** `ai/auto-cycle-v7` — **không đụng `main`**
+- **Sprint:** Cycle v7 — tối ưu chống spam TTCN (bỏ nhịp mở mini-app riêng chỉ để nhận ICON)
+- **Company Status:** **CYCLE v7 COMPLETE** — 1 task DONE (TASK-056); Reviewer APPROVED + QA PASS; Gate A (89/100)
+- **Active Task:** _(không có — cycle v7 đã đóng)_
+- **Current Focus:** Theo dõi PR của `ai/auto-cycle-v7`; follow-up không chặn: mock frame cho `checkInventoryIcons`, cuộn tới card nếu mini-app virtualize DOM
+- **Repo:** branch `ai/auto-cycle-v7` tách từ `main` `258e4af`; push nhánh phụ để tạo PR, **không push `main`**
 - **Freeze:** Không merge/release/live. Commit chỉ trên nhánh cycle.
 - **Security Risk Acceptance:** TASK-025 — **ACCEPTED RISK APPROVED**; TASK-026 — **APPROVED** (force push executed, lịch sử cũ).
-- **Residual risk:** `npm test` **382/382** trên nhánh cycle. ICON/TTCN đã hủy theo `orderId` và nhận đúng ICON; còn: `checkInventoryIcons` retry chưa có mock frame.
+- **Residual risk:** `npm test` **386/386** trên nhánh cycle. TTCN chỉ mở một lần mỗi kỳ monitor (hủy + nhận chung); ICON khớp được nhận trong kỳ kế tiếp (tối đa 15 phút) thay vì 2 phút.
 - **Owner Decision (2026-11-15):** `TASK-003 Stage B` và `TASK-039` → **WONT_DO** — Owner xác nhận không có nhu cầu triển khai; **không nhắc lại ở các cycle sau**.
 
-## 0. Cycle 2026-11-16 v6 — ICON/TTCN live bug fix (COMPLETE)
+## 0. Cycle 2026-11-16 v7 — Gộp nhận ICON vào lần mở TTCN của monitor (COMPLETE)
+
+| Task | Nội dung | Trạng thái | Gate | Record |
+|---|---|---|---|---|
+| `TASK-056` | Một lần mở TTCN vừa hủy đơn "Hủy" vừa quét/nhận ICON "Nhận"; bỏ nhịp 2 phút/10 phút | **DONE** | A (89/100) | [completed](completed/TASK-056-merge-receive-into-monitor-ttcn.md) |
+
+Tổng kết cycle: [`docs/completed/CYCLE-2026-11-16-v7.md`](completed/CYCLE-2026-11-16-v7.md).
+
+## 0y. Cycle 2026-11-16 v6 — ICON/TTCN live bug fix (COMPLETE)
 
 | Task | Nội dung | Trạng thái | Gate | Record |
 |---|---|---|---|---|

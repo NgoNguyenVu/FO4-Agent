@@ -462,37 +462,61 @@ async function receiveIconOrders(
 }
 
 
-// Hủy các success đã lọc vị trí > ngưỡng. baselineIds là ảnh chụp TTCN trước
-// khi đặt mua; nếu null thì vẫn chọn card khớp mã/grade và log cảnh báo.
-//
-// Danh sách được đọc lại TOÀN BỘ sau mỗi lần hủy và target được ánh xạ theo
-// orderId (không theo chỉ số). Vì vậy khi đơn trước (ví dụ đơn 27) biến mất
-// khỏi TTCN, đơn kế tiếp (đơn 4) vẫn được xử lý thay vì bị bỏ sót/lệch index.
-async function cancelIconOrders(page, rl, successes, baselineIds = null) {
-  const results = { canceled: [], failed: [], notFound: [] };
-  const cancelable = (successes || []).filter((success) => {
+function cancelableTargets(targets) {
+  return (targets || []).filter((success) => {
     const position = Number(success?.position);
     return Number.isFinite(position) &&
       position > Number(config.iconBuy.cancelPositionAbove);
   });
-  for (const success of (successes || []).filter((item) => !cancelable.includes(item))) {
+}
+
+// Điều phối MỘT danh sách TTCN đã mở: hủy các đơn vị trí xấu rồi quét/nhận
+// ICON "Nhận" trên chính danh sách đó, trước khi caller đóng mini-app.
+//
+// Nhận adapter (readOrders/cancelOrder/clickReceive/wait) thay vì tự mở frame để
+// test hành vi gộp một lần mở TTCN mà không cần Playwright/Telegram thật.
+//
+// Danh sách được đọc lại TOÀN BỘ sau mỗi lần hủy và target được ánh xạ theo
+// orderId (không theo chỉ số). Vì vậy khi đơn trước (ví dụ đơn 27) biến mất
+// khỏi TTCN, đơn kế tiếp (đơn 4) vẫn được xử lý thay vì bị bỏ sót/lệch index.
+async function runTtcnMaintenance({
+  targets = [],
+  baselineIds = null,
+  receive = null,
+  readOrders,
+  cancelOrder,
+  clickReceive,
+  wait = async () => {},
+  onAfterCancel = null,
+  apiWaitRounds = 6
+} = {}) {
+  const results = {
+    canceled: [],
+    failed: [],
+    notFound: [],
+    received: [],
+    receiveFailed: []
+  };
+  const cancelable = cancelableTargets(targets);
+  for (const success of (targets || []).filter(
+    (item) => !cancelable.includes(item)
+  )) {
     log(
       `Bỏ qua hủy TTCN ${success?.code || "không rõ"}: ` +
         "chưa xác nhận vị trí xấu; không hủy trong bước kiểm tra /stop."
     );
   }
-  if (!cancelable.length) return results;
-  let frame = null;
-  try {
-    frame = await openTtcnList(page, rl, { refreshMenu: true, attempts: 1 });
+
+  if (cancelable.length) {
     const knownIds = baselineIds ? new Set(baselineIds) : null;
     // Giữ target theo khóa riêng thay vì chỉ số mảng để việc xóa đơn trước
     // không làm lệch các đơn còn lại.
     const remaining = new Map(
       cancelable.map((item, index) => [`${item.code}:${index}`, item])
     );
-    let orders = await readTtcnOrders(frame);
+    let orders = await readOrders();
     let waitedForApi = false;
+    const rounds = Math.max(0, Number(apiWaitRounds) || 0);
 
     while (remaining.size) {
       let plan = planTtcnCancellations(
@@ -503,10 +527,9 @@ async function cancelIconOrders(page, rl, successes, baselineIds = null) {
       if (!plan.length && !waitedForApi) {
         // API TTCN có thể cập nhật chậm sau khi bot báo đặt mua thành công.
         waitedForApi = true;
-        const orderDeadline = Date.now() + 10_000;
-        while (!plan.length && Date.now() < orderDeadline) {
-          await page.waitForTimeout(1_500);
-          orders = await readTtcnOrders(frame);
+        for (let round = 0; !plan.length && round < rounds; round += 1) {
+          await wait(1_500);
+          orders = await readOrders();
           plan = planTtcnCancellations(
             orders,
             [...remaining.values()],
@@ -530,7 +553,7 @@ async function cancelIconOrders(page, rl, successes, baselineIds = null) {
         `Đang hủy đơn TTCN ${target.code} (orderId ${order.orderId}, ` +
           `grade ${order.grade}, giá ${order.priceText}, vị trí ${cancelPositionText}).`
       );
-      const result = await cancelOneOrder(frame, order);
+      const result = await cancelOrder(order);
       if (result.ok) {
         results.canceled.push({
           ...target,
@@ -547,13 +570,11 @@ async function cancelIconOrders(page, rl, successes, baselineIds = null) {
         });
         log(`Hủy đơn ${target.code} thất bại: ${result.message}.`);
       }
-      await page.waitForTimeout(800);
+      await wait(800);
       // cancelOrder() gọi checkCancel() làm trống rồi tải lại #cancelList.
       // Chờ loading kết thúc trước khi đọc lại toàn bộ danh sách cho đơn tiếp.
-      await waitForTtcnList(frame, config.iconBuy.ttcnTimeoutSeconds * 1_000).catch(
-        () => {}
-      );
-      orders = await readTtcnOrders(frame);
+      if (typeof onAfterCancel === "function") await onAfterCancel();
+      orders = await readOrders();
       waitedForApi = false;
     }
 
@@ -568,10 +589,91 @@ async function cancelIconOrders(page, rl, successes, baselineIds = null) {
           "có thể đơn đã khớp hoặc đã được nhận."
       );
     }
+  }
+
+  // Nhận ICON trên CÙNG lần mở TTCN: sau khi hủy xong, danh sách đã được đọc
+  // lại nên card "Nhận" của ICON đã khớp (không phải PHÔI) được bấm ngay.
+  if (receive) {
+    const outcome = await receiveFromPlan({
+      players: receive.players || null,
+      grade: receive.grade ?? null,
+      quantity: receive.quantity ?? null,
+      onReceived: receive.onReceived || null,
+      readOrders,
+      clickReceive
+    });
+    results.received = outcome.received;
+    results.receiveFailed = outcome.failed;
+  }
+
+  return results;
+}
+
+// Mở TTCN đúng MỘT lần cho cả hủy lẫn nhận, rồi đóng. Không mở mini-app riêng
+// chỉ để quét "Nhận" nữa (nguồn spam /tn 2 phút/lần của cycle v6).
+async function maintainTtcnOrders(
+  page,
+  rl,
+  { targets = [], baselineIds = null, receive = null } = {}
+) {
+  const empty = {
+    canceled: [],
+    failed: [],
+    notFound: [],
+    received: [],
+    receiveFailed: []
+  };
+  if (!cancelableTargets(targets).length && !receive) return empty;
+  let frame = null;
+  try {
+    frame = await openTtcnList(page, rl, {
+      refreshMenu: false,
+      attempts: 1
+    });
+    return await runTtcnMaintenance({
+      targets,
+      baselineIds,
+      receive,
+      readOrders: () => readTtcnOrders(frame),
+      cancelOrder: (order) => cancelOneOrder(frame, order),
+      clickReceive: (order) => clickReceiveOrder(frame, order),
+      wait: (ms) => page.waitForTimeout(ms),
+      onAfterCancel: () =>
+        waitForTtcnList(frame, config.iconBuy.ttcnTimeoutSeconds * 1_000).catch(
+          () => {}
+        )
+    });
   } finally {
     if (frame) await closeMiniApp(page, "mini-app Auto Mua").catch(() => {});
   }
-  return results;
+}
+
+// Hủy các success đã lọc vị trí > ngưỡng. baselineIds là ảnh chụp TTCN trước
+// khi đặt mua; nếu null thì vẫn chọn card khớp mã/grade và log cảnh báo.
+async function cancelIconOrders(page, rl, successes, baselineIds = null) {
+  const result = await maintainTtcnOrders(page, rl, {
+    targets: successes,
+    baselineIds
+  });
+  return {
+    canceled: result.canceled,
+    failed: result.failed,
+    notFound: result.notFound
+  };
+}
+
+// Mở TTCN, quét toàn bộ danh sách và bấm "Nhận" cho đúng các thẻ ICON đã mua
+// xong. Dòng PHÔI có "Nhận" bị lọc bỏ trong selectIconOrdersToReceive.
+// Giữ lại cho caller độc lập/test; luồng runner dùng chung maintainTtcnOrders.
+async function receiveIconOrders(
+  page,
+  rl,
+  { players = null, grade = null, quantity = null, onReceived = null } = {}
+) {
+  const result = await maintainTtcnOrders(page, rl, {
+    receive: { players, grade, quantity, onReceived }
+  });
+  return { received: result.received, failed: result.receiveFailed };
 }
 
 module.exports = {
@@ -579,6 +681,8 @@ module.exports = {
   openTtcnList,
   readTtcnOrders,
   captureTtcnBaseline,
+  runTtcnMaintenance,
+  maintainTtcnOrders,
   cancelIconOrders,
   receiveIconOrders
 };

@@ -1,7 +1,8 @@
-// Behavior/unit test cho 3 lỗi thực tế của luồng ICON trên TTCN (Cycle v6):
+// Behavior/unit test cho luồng ICON trên TTCN:
 //   (a) đơn trước bị xóa khỏi TTCN thì vẫn xử lý tiếp đơn kế tiếp, không lệch index
 //   (b) quét toàn bộ danh sách, chỉ nhận ICON "Nhận", bỏ qua PHÔI "Nhận"
 //   (c) nhận ICON xong tự động chuyển sang mua phôi + nâng cấp
+//   (d) Cycle v7: hủy "Hủy" + nhận "Nhận" trên CÙNG một lần mở TTCN
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -13,6 +14,7 @@ const {
   isReceiveAction
 } = require("./patterns");
 const { receiveFromPlan } = require("./receive");
+const { runTtcnMaintenance } = require("./ttcn");
 const { iconReceivePivotPlan } = require("../upgrade/receive-pivot");
 
 function order(overrides) {
@@ -206,18 +208,129 @@ test("(c) nhận thất bại thì không báo pivot và không lặp card lỗi
   assert.equal(iconReceivePivotPlan(result.received), null);
 });
 
-test("TTCN đọc toàn bộ danh sách và hủy/nhận theo orderId, không theo index", () => {
+test("(d) một lần mở TTCN vừa hủy đơn xấu vừa nhận ICON 'Nhận'", async () => {
+  let rows = [
+    order({ orderId: "bad-1", spid: "101000001", code: "101000001", action: "Hủy" }),
+    order({
+      orderId: "phoi-2",
+      spid: "102000002",
+      code: "102000002",
+      season: "26TOTS",
+      action: "Nhận"
+    }),
+    order({ orderId: "icon-3", spid: "101000003", code: "101000003", action: "Nhận" })
+  ];
+  const events = [];
+  const result = await runTtcnMaintenance({
+    targets: [{ code: "101000001", grade: 1, position: 9 }],
+    baselineIds: new Set(["old-1"]),
+    receive: { grade: 1 },
+    readOrders: async () => rows,
+    cancelOrder: async (item) => {
+      events.push(`cancel:${item.orderId}`);
+      rows = rows.filter((row) => row.orderId !== item.orderId);
+      return { ok: true, message: "Hủy thành công" };
+    },
+    clickReceive: async (item) => {
+      events.push(`receive:${item.orderId}`);
+      rows = rows.filter((row) => row.orderId !== item.orderId);
+      return { ok: true, message: "Nhận thành công" };
+    },
+    wait: async () => {},
+    onAfterCancel: async () => {},
+    apiWaitRounds: 0
+  });
+
+  // Hủy trước, nhận sau, trên cùng một danh sách (một lần mở TTCN).
+  assert.deepEqual(events, ["cancel:bad-1", "receive:icon-3"]);
+  assert.deepEqual(result.canceled.map((item) => item.orderId), ["bad-1"]);
+  assert.deepEqual(result.received.map((item) => item.orderId), ["icon-3"]);
+  assert.deepEqual(result.receiveFailed, []);
+  assert.deepEqual(result.notFound, []);
+});
+
+test("(d) hủy lỗi không chặn nhận ICON trong cùng lần mở", async () => {
+  const rows = [
+    order({ orderId: "bad-1", spid: "101000001", code: "101000001", action: "Hủy" }),
+    order({ orderId: "icon-3", spid: "101000003", code: "101000003", action: "Nhận" })
+  ];
+  const received = [];
+  const result = await runTtcnMaintenance({
+    targets: [{ code: "101000001", grade: 1, position: 9 }],
+    receive: { grade: 1 },
+    readOrders: async () => rows,
+    cancelOrder: async () => ({ ok: false, message: "Hủy thất bại" }),
+    clickReceive: async (item) => {
+      received.push(item.orderId);
+      return { ok: true, message: "Nhận thành công" };
+    },
+    wait: async () => {},
+    apiWaitRounds: 0
+  });
+
+  assert.equal(result.failed.length, 1);
+  assert.deepEqual(received, ["icon-3"]);
+  assert.deepEqual(result.received.map((item) => item.orderId), ["icon-3"]);
+});
+
+test("(d) đơn xấu đã biến mất khỏi TTCN vẫn quét nhận ICON", async () => {
+  const rows = [
+    order({ orderId: "icon-3", spid: "101000003", code: "101000003", action: "Nhận" })
+  ];
+  const result = await runTtcnMaintenance({
+    targets: [{ code: "101000099", grade: 1, position: 9 }],
+    receive: { grade: 1 },
+    readOrders: async () => rows,
+    cancelOrder: async () => ({ ok: true, message: "Hủy thành công" }),
+    clickReceive: async () => ({ ok: true, message: "Nhận thành công" }),
+    wait: async () => {},
+    apiWaitRounds: 0
+  });
+
+  assert.deepEqual(result.notFound.map((item) => item.code), ["101000099"]);
+  assert.deepEqual(result.received.map((item) => item.orderId), ["icon-3"]);
+});
+
+test("(d) không có target lẫn receive thì không đọc danh sách TTCN", async () => {
+  let reads = 0;
+  const result = await runTtcnMaintenance({
+    targets: [],
+    receive: null,
+    readOrders: async () => {
+      reads += 1;
+      return [];
+    }
+  });
+  assert.equal(reads, 0);
+  assert.deepEqual(result, {
+    canceled: [],
+    failed: [],
+    notFound: [],
+    received: [],
+    receiveFailed: []
+  });
+});
+
+test("TTCN đọc toàn bộ danh sách và hủy/nhận trong một lần mở, theo orderId", () => {
   const ttcnSrc = fs.readFileSync(path.join(__dirname, "ttcn.js"), "utf8");
   assert.match(ttcnSrc, /scrollTop = list\.scrollHeight/);
   assert.match(ttcnSrc, /mergeTtcnOrderPages/);
   assert.match(ttcnSrc, /planTtcnCancellations/);
   assert.match(ttcnSrc, /receiveFromPlan/);
   assert.match(ttcnSrc, /async function readTtcnOrders\(frame, \{ scroll = true/);
+  // Một lần mở TTCN: mở frame -> hủy + nhận trên cùng readOrders -> đóng.
+  assert.match(ttcnSrc, /async function runTtcnMaintenance\(/);
+  assert.match(ttcnSrc, /async function maintainTtcnOrders\(/);
+  assert.match(ttcnSrc, /readOrders: \(\) => readTtcnOrders\(frame\)/);
 
   const runnerSrc = fs.readFileSync(path.join(__dirname, "runner.js"), "utf8");
   assert.match(runnerSrc, /onIconReceived/);
-  assert.match(runnerSrc, /scanReceivedIcons/);
-  assert.match(runnerSrc, /receiveIconOrders/);
+  assert.match(runnerSrc, /maintainTtcnOrders/);
+  assert.match(runnerSrc, /maxWaitMs: configuredMonitorMs/);
+  // Không còn nhịp mở TTCN riêng chỉ để nhận ICON.
+  assert.doesNotMatch(runnerSrc, /RECEIVE_SCAN_INTERVAL_MS/);
+  assert.doesNotMatch(runnerSrc, /scanReceivedIcons/);
+  assert.doesNotMatch(runnerSrc, /nextReceiveScanAt/);
 
   const controllerSrc = fs.readFileSync(
     path.join(__dirname, "..", "controller.js"),
