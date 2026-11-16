@@ -1,11 +1,21 @@
 # Roadmap — FO4-Agent
 
-- **Cập nhật:** 2026-11-16 (cycle v6 — ICON/TTCN live bug fix; đóng TASK-053/054/055; xem `docs/completed/CYCLE-2026-11-16-v6.md`)
+- **Cập nhật:** 2026-11-16 (cycle v7 — gộp nhận ICON vào lần mở TTCN của monitor; đóng TASK-056; xem `docs/completed/CYCLE-2026-11-16-v7.md`)
 - **Người lập:** Architect Agent; cập nhật bởi Manager Agent
 - **Nguồn dữ liệu:** `docs/backlog.md` + Cortex MCP (`cortex_code_search`, `cortex_code_context`, `cortex_detect_changes`, `cortex_code_impact`).
 - **Trạng thái:** Roadmap đề xuất, chưa cam kết ngày cứng. Thời lượng là ước tính cho một team nhỏ.
 
-## 0. Cập nhật cycle 2026-11-16
+## 0. Cập nhật cycle 2026-11-16 v7
+
+### 0.1. Cycle v7 — Tối ưu chống spam TTCN (2026-11-16)
+
+- **Đã xong:** TASK-056 (một lần mở TTCN vừa hủy "Hủy" vừa quét/nhận ICON "Nhận"; bỏ nhịp mở riêng 2 phút/10 phút; giữ pivot mua phôi + nâng cấp, Gate A 89). `npm test` **386/386**.
+- **Đánh đổi có chủ đích:** ICON khớp được nhận trong kỳ monitor kế tiếp (tối đa `monitorWaitSeconds = 900s`); TTCN chỉ mở một lần mỗi kỳ.
+- **WONT_DO (Owner 2026-11-15):** TASK-003 Stage B; TASK-039 `purchaseTimeoutSeconds = 0` — không nhắc lại.
+- **Follow-up không chặn:** mock frame cho `checkInventoryIcons`; cuộn tới card nếu mini-app virtualize DOM.
+- **Điều kiện:** không merge/push `main`; cycle v7 chỉ push `ai/auto-cycle-v7` để tạo PR.
+
+## 0y. Cập nhật cycle 2026-11-16 v6
 
 ### 0.1. Cycle v6 — ICON/TTCN live bug fix (2026-11-16)
 

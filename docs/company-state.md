@@ -1,26 +1,34 @@
 # Company State
 
-- **Cập nhật:** 2026-11-16 (Cycle v6 — sửa lỗi live ICON/TTCN, đóng cycle)
+- **Cập nhật:** 2026-11-16 (Cycle v7 — gộp nhận ICON vào lần mở TTCN của monitor)
 - **Người cập nhật:** Manager Agent (Engineering Director)
-- **Current Sprint:** Cycle v6 — ICON/TTCN live bug fix
-- **Branch:** `ai/auto-cycle-v6` (tách từ `main` `a2c6e18`; push nhánh phụ để tạo PR, không đụng `main`)
-- **Company Delivery Status:** **3 task DONE (cycle v6)** — TASK-053 (hủy TTCN không lệch index), TASK-054 (quét toàn bộ + nhận ICON, loại PHÔI), TASK-055 (nhận xong pivot mua phôi + nâng). Reviewer APPROVED + QA PASS; Gate A (88/100).
-- **Active Cycle Status:** **CYCLE v6 COMPLETE** — `npm test` **382/382**; `scan:secrets` + `scan:history` pass.
-- **Current Task:** _(không có)_ — cycle v6 đã đóng
-- **Task Status:** **DONE (cycle v6)**
-- **Reviewer:** **APPROVED** — TASK-053/054/055 — 2026-11-16
-- **QA:** **PASS** — TASK-053/054/055 (382/382) — 2026-11-16
+- **Current Sprint:** Cycle v7 — tối ưu chống spam TTCN
+- **Branch:** `ai/auto-cycle-v7` (tách từ `main` `258e4af`; push nhánh phụ để tạo PR, không đụng `main`)
+- **Company Delivery Status:** **1 task DONE (cycle v7)** — TASK-056 (một lần mở TTCN vừa hủy "Hủy" vừa quét/nhận ICON "Nhận", bỏ nhịp mở riêng 2 phút/10 phút). Reviewer APPROVED + QA PASS; Gate A (89/100).
+- **Active Cycle Status:** **CYCLE v7 COMPLETE** — `npm test` **386/386**; `scan:secrets` + `scan:history` pass.
+- **Current Task:** _(không có)_ — cycle v7 đã đóng
+- **Task Status:** **DONE (cycle v7)**
+- **Reviewer:** **APPROVED** — TASK-056 — 2026-11-16
+- **QA:** **PASS** — TASK-056 (386/386) — 2026-11-16
 - **Parallel Security Task:** TASK-025 — **ACCEPTED RISK APPROVED** (không có credential production)
 - **Blocked Task:** _(không có)_
 - **Authorization Required:** _(không có)_
 - **WONT_DO (Owner 2026-11-15):** `TASK-003 Stage B` (hard cap/live gate) và `TASK-039` (`purchaseTimeoutSeconds`) — Owner xác nhận không có nhu cầu triển khai; **không nhắc lại ở các cycle sau**.
-- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v6`)
+- **Commit Allowed:** Chỉ khi task = `COMMIT_AUTHORIZED` (trên nhánh `ai/auto-cycle-v7`)
 - **Push Allowed:** Chỉ nhánh `ai/*` (phục vụ PR); **không push `main`**
 - **Merge Allowed:** NO
 - **Live Run Allowed:** NO
 - **Security Risk Acceptance:** TASK-025 — **APPROVED**; TASK-026 — **APPROVED** (force push lịch sử cũ).
 
-## 0. Cycle 2026-11-16 v6 — ICON/TTCN live bug fix
+## 0. Cycle 2026-11-16 v7 — Gộp nhận ICON vào lần mở TTCN của monitor
+
+| Task | Deliverable | Trạng thái | Gate |
+|---|---|---|---|
+| `TASK-056` | `runTtcnMaintenance` + `maintainTtcnOrders`: một lần mở TTCN vừa hủy đơn vị trí xấu vừa quét/nhận ICON "Nhận"; xóa `RECEIVE_SCAN_INTERVAL_MS`/`scanReceivedIcons`; giữ pivot `iconReceivePivotPlan` + 4 test hành vi mới | **DONE** | A (89) |
+
+Chi tiết: [`docs/completed/CYCLE-2026-11-16-v7.md`](completed/CYCLE-2026-11-16-v7.md).
+
+## 0y. Cycle 2026-11-16 v6 — ICON/TTCN live bug fix
 
 | Task | Deliverable | Trạng thái | Gate |
 |---|---|---|---|
