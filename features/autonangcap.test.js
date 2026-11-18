@@ -39,7 +39,10 @@ const {
   expandUpgradeAdvanced,
   findNcMenuButton,
   hasRecentUpgradeMenu,
-  hasFreshUpgradeMenu
+  hasFreshUpgradeMenu,
+  settleUpgradeOutcome,
+  decideMasterUpgradePhase,
+  pivotMasterToUpgrade
 } = require("./upgrade");
 const {
   chatTextReaders,
@@ -978,4 +981,32 @@ test("detects a new terminal when trimming swaps old and new terminals with the 
       "20:35",
     newerBaseline
   ), false);
+});
+
+test("upgrade E006 surfaces a system-error outcome instead of idling", async () => {
+  const settled = await settleUpgradeOutcome(
+    { status: "system-error" },
+    null,
+    { targetGrade: 5 },
+    null,
+    null
+  );
+  assert.equal(settled.action, "system-error");
+  assert.equal(decideMasterUpgradePhase("system-error"), "e006");
+  // Các action cũ giữ nguyên hợp đồng.
+  assert.equal(decideMasterUpgradePhase("continue"), "continue");
+  assert.equal(decideMasterUpgradePhase("no-materials"), "buy");
+  assert.equal(decideMasterUpgradePhase("no-progress"), "idle");
+});
+
+test("upgrade E006 keeps the agent active and flags a cooldown retry", async () => {
+  const logs = [];
+  const pivot = await pivotMasterToUpgrade(
+    null,
+    null,
+    async () => ({ action: "system-error" }),
+    (line) => logs.push(line)
+  );
+  assert.deepEqual(pivot, { agentActive: true, e006: true });
+  assert.ok(logs.some((line) => /E006/.test(line)));
 });

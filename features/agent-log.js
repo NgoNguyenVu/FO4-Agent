@@ -1,18 +1,6 @@
 // Ghi log dùng chung cho toàn agent (console + file nhật ký).
 const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-
-const dataDir = path.join(
-  process.env.LOCALAPPDATA || os.homedir(),
-  "FO4PurchaseAgent"
-);
-// Khi chạy `node --test`, ghi sang file riêng để log vận hành không bị lẫn
-// các dòng mô phỏng của test (trước đây test từng ghi "sau 0 phút" vào log live).
-const logPath = path.join(
-  dataDir,
-  process.env.NODE_TEST_CONTEXT ? "agent.test.log" : "agent.log"
-);
+const { dataDir, logPath } = require("../lib/log-paths");
 
 function log(message) {
   const line = `[${new Date().toISOString()}] ${message}`;

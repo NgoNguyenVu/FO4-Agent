@@ -10,7 +10,8 @@
     "scan:secrets": "node scripts/check-secrets.js",
     "scan:history": "node scripts/check-secrets.js --history",
     "scan:staged": "node scripts/check-secrets.js --staged",
-    "worker:resolve": "node scripts/resolve-worker.js"
+    "worker:resolve": "node scripts/resolve-worker.js",
+    "log:compare": "node scripts/compare-telegram-log.js"
   },
   "dependencies": {
     "playwright": "^1.56.1"

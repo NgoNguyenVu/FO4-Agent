@@ -13,6 +13,7 @@
 // menu /stop chỉ được dùng để đọc và đếm task; không bấm bất kỳ nút dừng nào.
 // Controller chạy runner này ở nền; các thao tác UI được bảo vệ bởi khóa chung.
 const { chatTextReaders } = require("../../lib/chat-runtime");
+const { E006_COOLDOWN_MS } = require("../../lib/e006-cooldown");
 const { config } = require("../config");
 const { log } = require("../agent-log");
 const { lookupFavoriteIconPlayers } = require("./favorites");
@@ -510,7 +511,10 @@ async function runIconBuy(page, rl, {
   isStopRequested = null,
   ui = null,
   onPurchaseSuccess = null,
-  onIconReceived = null
+  onIconReceived = null,
+  // Báo controller biết E006 để hoãn riêng luồng ICON 10 phút thay vì dừng
+  // toàn bộ agent hoặc để registry kẹt ở trạng thái unknown.
+  onE006 = null
 } = {}) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
@@ -1047,12 +1051,24 @@ async function runIconBuy(page, rl, {
             `${missing.map((player) => player.code).join(", ") || "không rõ"}).`
         );
         if (/E006|làm mới token/i.test(result.fatalError)) {
-            log(
-              "E006 là lỗi token tạm thời; giữ nguyên task ICON, không đặt lại " +
-                "và tiếp tục vòng theo dõi để tránh mua trùng."
-            );
-            await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
-            continue;
+          log(
+            "E006 là lỗi token tạm thời; giữ nguyên task ICON, không đặt lại " +
+              `và tạm hoãn luồng ICON ${Math.round(E006_COOLDOWN_MS / 60_000)} phút ` +
+              "để tránh mua trùng."
+          );
+          if (typeof onE006 === "function") {
+            await onE006(new Error(result.fatalError), {
+              source: "icon-buy:place"
+            });
+          }
+          return {
+            action: "e006-cooldown",
+            batches,
+            purchased,
+            canceled,
+            reason: "token",
+            received: receivedIcons
+          };
         }
         if (reason !== "order-limit") {
           // E007 nghĩa là bot chưa tạo task mới; các lỗi khác vẫn có thể đã tạo.
@@ -1236,10 +1252,22 @@ async function runIconBuy(page, rl, {
       if (/E006|làm mới token/i.test(result.fatalError)) {
         log(
           "E006 là lỗi token tạm thời sau khi đã có đơn; giữ nguyên các task " +
-            "và tiếp tục theo dõi, không đặt lại."
+            `và tạm hoãn luồng ICON ${Math.round(E006_COOLDOWN_MS / 60_000)} phút, ` +
+            "không đặt lại."
         );
-        await page.waitForTimeout(config.iconBuy.slotPollSeconds * 1_000);
-        continue;
+        if (typeof onE006 === "function") {
+          await onE006(new Error(result.fatalError), {
+            source: "icon-buy:monitor"
+          });
+        }
+        return {
+          action: "e006-cooldown",
+          batches,
+          purchased,
+          canceled,
+          reason: "token",
+          received: receivedIcons
+        };
       }
       const reason = /E007|giới hạn lệnh mua đang chạy/i.test(result.fatalError)
         ? "order-limit"

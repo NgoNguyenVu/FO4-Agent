@@ -9,11 +9,21 @@ const {
 } = require("./cycle");
 const { idleOutcomeMessage } = require("./patterns");
 
+// Bot báo kho đầy nhưng chưa xác nhận nhận cầu thủ: không đưa cả agent về idle
+// và bắt người dùng gửi /startagent. Giữ vòng ACTIVE sống, chờ đúng 5 phút rồi
+// kiểm tra lại kho/`/stop`; chỉ mua tiếp khi trạng thái đã an toàn.
+const INVENTORY_RECEIPT_RETRY_MS = 5 * 60 * 1000;
+
 async function settleBuyOutcome(
   page,
   rl,
   outcome,
-  { pivotToUpgrade = false, completedLog = "", ui = null } = {}
+  {
+    pivotToUpgrade = false,
+    completedLog = "",
+    ui = null,
+    waitForReceipt = waitForInventoryReceipt
+  } = {}
 ) {
   if (outcome.status === "stop-requested") {
     const restart = ui
@@ -32,9 +42,22 @@ async function settleBuyOutcome(
     };
   }
   if (outcome.status === "inventory-full") {
-    const received = await waitForInventoryReceipt(page, outcome);
+    const received = await waitForReceipt(page, outcome);
     if (received === null) {
-      return { agentActive: false, openNext: false, pivotToUpgrade: false };
+      // Fail-safe nhưng không đứng chờ người dùng: trả tín hiệu để controller
+      // giữ vòng ACTIVE sống và kiểm tra lại kho sau INVENTORY_RECEIPT_RETRY_MS.
+      log(
+        "Chưa xác nhận nhận cầu thủ sau khi kho đầy; giữ agent sống và " +
+          `kiểm tra lại kho sau ${Math.round(
+            INVENTORY_RECEIPT_RETRY_MS / 60_000
+          )} phút thay vì chờ /startagent.`
+      );
+      return {
+        agentActive: true,
+        openNext: false,
+        pivotToUpgrade: false,
+        retryInventoryReceipt: true
+      };
     }
     if (pivotToUpgrade) {
       log("Đã nhận cầu thủ vào kho sau khi kho đầy; vòng tổng chuyển sang nâng cấp.");
@@ -69,5 +92,6 @@ function createBuyCompletionRecord(outcome, source) {
 
 module.exports = {
   settleBuyOutcome,
-  createBuyCompletionRecord
+  createBuyCompletionRecord,
+  INVENTORY_RECEIPT_RETRY_MS
 };

@@ -28,8 +28,10 @@ async function settleUpgradeOutcome(outcome, target, spec, page, rl) {
     return { action: "targets-exhausted", outcome, target };
   }
   if (outcome.status === "system-error") {
-    log("Bot nâng cấp trả E006; dừng và chờ lệnh mới.");
-    return { action: "idle" };
+    // E006: không đưa cả agent về idle. Controller sẽ hoãn riêng upgrade
+    // 10 phút rồi tự chạy lại phase nâng.
+    log("Bot nâng cấp trả E006; tạm hoãn riêng luồng nâng cấp.");
+    return { action: "system-error", outcome, target };
   }
   if (outcome.status === "stop-requested") {
     // Target check có thể đã mở lại mini-app và để nó trên màn hình. Đóng trước
@@ -172,10 +174,12 @@ function shouldResumeBuyAfterUpgrade(outcome, startGrade) {
 // Quyết định của phase nâng trong chế độ tổng:
 // - "continue": thử target khác trong cùng phase.
 // - "buy": quay lại Auto Mua (hết phôi hoặc hết target khả thi).
+// - "e006": hoãn riêng upgrade 10 phút, giữ agent active để feature khác chạy.
 // - "idle": dừng, chờ can thiệp.
 function decideMasterUpgradePhase(action) {
   if (action === "continue" || action === "blocked-target") return "continue";
   if (action === "no-materials" || action === "no-targets") return "buy";
+  if (action === "system-error") return "e006";
   return "idle";
 }
 
@@ -217,6 +221,13 @@ async function pivotMasterToUpgrade(page, rl, runUpgrade = runSingleUpgrade, log
 
     const decision = decideMasterUpgradePhase(up.action);
     if (decision === "continue") continue;
+    if (decision === "e006") {
+      logFn(
+        "Phase nâng gặp E006; hoãn riêng upgrade 10 phút rồi tự chạy lại, " +
+          "không dừng toàn bộ agent."
+      );
+      return { agentActive: true, e006: true };
+    }
     if (decision === "buy") {
       if (up.action === "no-materials") {
         logFn(

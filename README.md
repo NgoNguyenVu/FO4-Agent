@@ -128,6 +128,35 @@ hong la "agent dang chay" va tu choi sua state.
    ```
 4. Khoi dong lai agent va gui `/startagent`.
 
+### Log hoi thoai Telegram
+
+Ngoai `agent.log`, agent ghi moi tin nhan trong chat bot vao
+`%LOCALAPPDATA%\FO4PurchaseAgent\telegram-chat.log` (cung thu muc voi
+`agent.log`). Moi tin la mot dong:
+
+```text
+[2026-11-18T07:00:00.000Z] [Direction: IN] /startagent
+[2026-11-18T07:00:01.000Z] [Direction: OUT] Bot: da bat dau treo auto mua
+```
+
+- `IN`: tin tu tai khoan Telegram dang dang nhap gui toi bot (lenh nguoi dung,
+  ke ca cac lenh agent tu gui nhu `/tn`, `/stopauto`).
+- `OUT`: tin bot tra ve (menu, thong bao mua/nang, loi E006...).
+- Lich su chat co san luc khoi dong chi duoc lay lam moc, khong ghi lai.
+- Dat `FO4_TELEGRAM_CHAT_LOG=<duong-dan>` de ghi sang file khac.
+
+Doi chieu voi `agent.log` de biet agent nhan lenh sau bao lau va action co
+khop khong:
+
+```powershell
+npm.cmd run log:compare
+npm.cmd run log:compare -- --json
+npm.cmd run log:compare -- --agent <agent.log> --chat <telegram-chat.log>
+```
+
+Lenh chi doi chieu `/startagent`, `/stopagent`, `/resetagent`. Tin `IN` khac va
+tin `OUT` van nam trong log nhung khong tham gia ghep cap.
+
 ## Kiem tra
 
 ```powershell

@@ -42,6 +42,12 @@ const { getLifecycle } = require("../lib/lifecycle");
 const { getWorkerRegistry } = require("../lib/worker-registry");
 const { createWorkerSession } = require("../lib/worker-session");
 const {
+  createE006Cooldown,
+  identifyE006Flow,
+  isE006Error,
+  E006_FLOWS
+} = require("../lib/e006-cooldown");
+const {
   promptWakeable,
   wakePendingPrompt,
   setWaitingForRecoveryPrompt,
@@ -57,6 +63,7 @@ const {
   checkAutoBuyRunning,
   waitForCycleCompletion,
   settleBuyOutcome,
+  INVENTORY_RECEIPT_RETRY_MS,
   createBuyCompletionRecord,
   getTradeFrame,
   configureCycle,
@@ -134,6 +141,17 @@ async function main() {
   const registry = getWorkerRegistry();
   const workerSession = createWorkerSession({ registry, log, logError });
   let iconBeginBlocked = false;
+  // E006 được cô lập theo từng feature: feature lỗi bị hoãn 10 phút, các feature
+  // khác vẫn chạy. Không đẩy worker vào unknown và không đưa cả agent về idle.
+  const e006Cooldown = createE006Cooldown({ log, logError });
+  // Upgrade bị E006 giữa phase nâng: sau cooldown chạy lại đúng phase nâng.
+  let pendingUpgradeRetry = false;
+
+  const deferE006 = (flow, error = null, options = {}) => {
+    const state = e006Cooldown.defer(flow, error, options);
+    if (flow === E006_FLOWS.UPGRADE) pendingUpgradeRetry = true;
+    return state;
+  };
 
   const stopIconMonitor = async (reason) => {
     iconStopRequested = true;
@@ -149,6 +167,9 @@ async function main() {
 
   const ensureIconMonitor = () => {
     if (iconMonitor) return;
+    // Đang trong cooldown E006 của chính icon-buy: không mở worker mới, chờ
+    // timer hết hạn rồi tự chạy lại. Các feature khác không bị ảnh hưởng.
+    if (e006Cooldown.isDeferred(E006_FLOWS.ICON_BUY)) return;
     // ICON là worker nền: được chạy song song với buy/upgrade nhưng không được
     // trùng feature và bị chặn nếu registry đang có worker unknown.
     const started = workerSession.tryBegin("icon", {
@@ -165,6 +186,12 @@ async function main() {
     iconMonitor = runIconBuy(page, rl, {
       ui,
       isStopRequested: () => iconStopRequested || remoteResetRequested,
+      // E006 do chính icon-buy: ghi cooldown theo flow, không đẩy registry sang
+      // unknown và không làm dừng vòng tổng.
+      onE006: (error, options = {}) =>
+        deferE006(E006_FLOWS.ICON_BUY, error, {
+          source: options.source || "icon-buy:runner"
+        }),
       // ICON vừa nhận từ TTCN phải vào kho ngay: bỏ qua nhịp chờ 30 phút để
       // vòng chính kiểm tra kho rồi chuyển sang mua phôi + nâng cấp.
       onIconReceived: (received) => {
@@ -180,6 +207,15 @@ async function main() {
       }
     })
       .then((result) => {
+        if (result?.action === "e006-cooldown") {
+          log(
+            `Luồng ICON tạm hoãn do E006 (${result.reason || "token"}); ` +
+              `sẽ tự chạy lại sau ${Math.ceil(
+                e006Cooldown.remainingMs(E006_FLOWS.ICON_BUY) / 1_000
+              )}s.`
+          );
+          return result;
+        }
         if (!iconStopRequested && result?.action !== "stop") {
           log(
             `Luồng ICON kết thúc (${result?.reason || result?.action || "không rõ"}); ` +
@@ -189,6 +225,19 @@ async function main() {
         return result;
       })
       .catch((error) => {
+        if (isE006Error(error)) {
+          // Lỗi token của icon-buy: chỉ hoãn icon-buy, không log stack và không
+          // đụng tới worker buy/upgrade đang chạy.
+          deferE006(E006_FLOWS.ICON_BUY, error, {
+            source: "ensureIconMonitor"
+          });
+          log(
+            `Luồng ICON tạm hoãn do E006; sẽ tự chạy lại sau ${Math.ceil(
+              e006Cooldown.remainingMs(E006_FLOWS.ICON_BUY) / 1_000
+            )}s.`
+          );
+          return null;
+        }
         if (error?.code === "TELEGRAM_CHAT_UNREADABLE") {
           // Chat Telegram bị đóng/kẹt quá lâu: mở lại phiên ở vòng kế tiếp
           // thay vì để luồng ICON lặp /stop vô hạn.
@@ -207,6 +256,25 @@ async function main() {
         iconMonitor = null;
       });
   };
+
+  // Hết cooldown E006: tự mở lại đúng feature đã lỗi, không cần người dùng gửi
+  // lệnh mới. Callback chạy sau khi state cooldown đã được reset.
+  e006Cooldown.onExpire(E006_FLOWS.ICON_BUY, () => {
+    if (!agentActive || remoteResetRequested || getLifecycle().isStopping()) return;
+    log("E006 [icon-buy] hết cooldown; tự khởi động lại luồng ICON.");
+    ensureIconMonitor();
+  });
+  e006Cooldown.onExpire(E006_FLOWS.PHOI_BUY, () => {
+    if (!agentActive || remoteResetRequested || getLifecycle().isStopping()) return;
+    log("E006 [phoi-buy] hết cooldown; vòng ACTIVE sẽ thử lại Auto Mua Phôi.");
+  });
+  e006Cooldown.onExpire(E006_FLOWS.UPGRADE, () => {
+    if (!agentActive || remoteResetRequested || getLifecycle().isStopping()) return;
+    if (mode === "master") {
+      pendingUpgradeRetry = true;
+      log("E006 [upgrade] hết cooldown; sẽ chạy lại Auto Nâng Cấp.");
+    }
+  });
 
   // TASK-004: dọn tài nguyên khi SIGINT/SIGTERM/uncaughtException. Handler chạy
   // một lần, có timeout cứng trong lib/lifecycle. Chỉ dừng worker do agent sở
@@ -255,6 +323,8 @@ async function main() {
       for (const active of workerSession.listActive()) {
         workerSession.stop(active.feature, { reason: "shutdown" });
       }
+      pendingUpgradeRetry = false;
+      e006Cooldown.clearAll();
     }
   });
   const rememberBuyCompletion = (outcome, source) => {
@@ -274,6 +344,7 @@ async function main() {
     mode = null;
     upgradeBlockedTargetIds = new Set();
     pendingBuyCompletion = null;
+    pendingUpgradeRetry = false;
     sessionUnavailable = true;
     log("Nhận /resetagent; agent về idle ngay, đang khởi động lại Telegram Web, không dừng worker bot.");
     resetClosePromise = Promise.race([
@@ -285,47 +356,115 @@ async function main() {
     if (isWaitingForPrompt()) wakePendingPrompt();
   };
 
+  // Chạy phase nâng cấp. Tách khỏi handleBuyOutcome để vòng ACTIVE có thể gọi
+  // lại đúng phase này sau cooldown E006 mà không phải giả lập một chu kỳ mua.
+  const runUpgradePivot = async () => {
+    if (e006Cooldown.isDeferred(E006_FLOWS.UPGRADE)) {
+      // Kho vẫn đầy nhưng upgrade đang bị hoãn: không mở mini-app kiểm tra kho
+      // liên tục, chờ hết cooldown rồi pendingUpgradeRetry chạy lại.
+      inventoryKnownAvailable = false;
+      nextInventoryCheckAt =
+        Date.now() + Math.max(1_000, e006Cooldown.remainingMs(E006_FLOWS.UPGRADE));
+      agentActive = true;
+      log(
+        `Auto Nâng Cấp đang tạm hoãn do E006; còn ` +
+          `${Math.ceil(e006Cooldown.remainingMs(E006_FLOWS.UPGRADE) / 1_000)}s.`
+      );
+      return false;
+    }
+    // Đặt lại trước khi pivot: nếu mini-app nâng lỗi hạ tầng (bot down) thì
+    // lần chạy lại vẫn kiểm tra kho trước, không nhảy thẳng vào mua phôi.
+    inventoryKnownAvailable = false;
+    nextInventoryCheckAt = 0;
+    const upgradeBegin = workerSession.tryBegin("upgrade");
+    if (!upgradeBegin) {
+      log("Registry đang chặn worker nâng cấp; agent về idle.");
+      agentActive = false;
+      return false;
+    }
+    workerSession.markRunning("upgrade");
+    let pivot;
+    try {
+      pivot = await pivotMasterToUpgrade(
+        page,
+        rl,
+        async (...args) => runSingleUpgrade(...args),
+        log,
+        ui
+      );
+    } catch (error) {
+      if (isE006Error(error)) {
+        // E006 của upgrade: hoãn riêng upgrade, không đẩy worker sang unknown.
+        deferE006(E006_FLOWS.UPGRADE, error, {
+          source: "pivotMasterToUpgrade"
+        });
+        workerSession.stop("upgrade", { reason: "e006-cooldown" });
+        inventoryKnownAvailable = false;
+        nextInventoryCheckAt =
+          Date.now() + Math.max(1_000, e006Cooldown.remainingMs(E006_FLOWS.UPGRADE));
+        agentActive = true;
+        return false;
+      }
+      workerSession.stop("upgrade", {
+        unknown: true,
+        reason: error.code || "pivot-error"
+      });
+      throw error;
+    }
+    if (pivot.e006) {
+      deferE006(E006_FLOWS.UPGRADE, null, {
+        message: "Bot nâng cấp trả E006.",
+        source: "pivotMasterToUpgrade"
+      });
+      workerSession.stop("upgrade", { reason: "e006-cooldown" });
+      inventoryKnownAvailable = false;
+      nextInventoryCheckAt =
+        Date.now() + Math.max(1_000, e006Cooldown.remainingMs(E006_FLOWS.UPGRADE));
+      agentActive = true;
+      return false;
+    }
+    workerSession.stop("upgrade", { reason: "pivot" });
+    miniAppServerDownBackoffSeconds = 60;
+    agentActive = pivot.agentActive;
+    if (pivot.mode && pivot.mode !== "icon") mode = pivot.mode;
+    return false;
+  };
+
   // Áp dụng kết quả 1 chu kỳ mua. Nếu kho đầy ở chế độ tổng thì pivot sang
   // feature nâng cấp; buy module không cần biết gì về upgrade.
   const handleBuyOutcome = async (outcome, completedLog) => {
+    if (outcome?.status === "system-error") {
+      // E006 của chính chu kỳ mua phôi: hoãn phoi-buy 10 phút, giữ agent sống
+      // để ICON và các feature khác tiếp tục. Không dùng unknown/evidence.
+      deferE006(E006_FLOWS.PHOI_BUY, null, {
+        message:
+          outcome.reason === "worker-token-stop"
+            ? "Worker Auto Mua Phôi dừng do không thể làm mới token."
+            : "Chu kỳ Auto Mua Phôi trả E006.",
+        source: "settleBuyOutcome"
+      });
+      if (workerSession.isRegistered("buy")) {
+        workerSession.stop("buy", { reason: "e006-cooldown" });
+      }
+      agentActive = true;
+      return false;
+    }
     const next = await settleBuyOutcome(page, rl, outcome, {
       pivotToUpgrade: mode === "master",
       completedLog,
       ui
     });
-    if (next.pivotToUpgrade) {
-      // Đặt lại trước khi pivot: nếu mini-app nâng lỗi hạ tầng (bot down) thì
-      // lần chạy lại vẫn kiểm tra kho trước, không nhảy thẳng vào mua phôi.
+    if (next.retryInventoryReceipt) {
+      // Bot báo kho đầy nhưng chưa xác nhận nhận cầu thủ: không đưa agent về
+      // idle và không mở chu kỳ mua mới ngay. Coi kho là chưa xác định, kiểm
+      // tra lại sau 5 phút; vòng ACTIVE vẫn nhận /stopagent.
       inventoryKnownAvailable = false;
-      nextInventoryCheckAt = 0;
-      const upgradeBegin = workerSession.tryBegin("upgrade");
-      if (!upgradeBegin) {
-        log("Registry đang chặn worker nâng cấp; agent về idle.");
-        agentActive = false;
-        return false;
-      }
-      workerSession.markRunning("upgrade");
-      let pivot;
-      try {
-        pivot = await pivotMasterToUpgrade(
-          page,
-          rl,
-          async (...args) => runSingleUpgrade(...args),
-          log,
-          ui
-        );
-      } catch (error) {
-        workerSession.stop("upgrade", {
-          unknown: true,
-          reason: error.code || "pivot-error"
-        });
-        throw error;
-      }
-      workerSession.stop("upgrade", { reason: "pivot" });
-      miniAppServerDownBackoffSeconds = 60;
-      agentActive = pivot.agentActive;
-      if (pivot.mode && pivot.mode !== "icon") mode = pivot.mode;
+      nextInventoryCheckAt = Date.now() + INVENTORY_RECEIPT_RETRY_MS;
+      agentActive = true;
       return false;
+    }
+    if (next.pivotToUpgrade) {
+      return runUpgradePivot();
     }
     agentActive = next.agentActive;
     if (next.mode && next.mode !== "icon") mode = next.mode;
@@ -433,7 +572,8 @@ async function main() {
     getLifecycle().updateHeartbeat({
       mode,
       agentActive,
-      activeWorkerId: workerSession.activeWorkerIds().join(",") || null
+      activeWorkerId: workerSession.activeWorkerIds().join(",") || null,
+      e006Cooldowns: e006Cooldown.snapshot()
     });
     const enteredActive = agentActive;
     try {
@@ -515,6 +655,7 @@ async function main() {
           initialWorkerCheckDone = false;
           inventoryKnownAvailable = false;
           nextInventoryCheckAt = 0;
+          pendingUpgradeRetry = false;
           inventoryReceiptSeen = countInventoryReceivedNotices(
             reader.snapshot().text
           );
@@ -671,6 +812,19 @@ async function main() {
       const units = config.maxPerCycle;
       const systemErrorCountBeforeMenu = countBotSystemErrors(reader.snapshot().text);
       ensureIconMonitor();
+      // Upgrade bị E006 ở phase trước: sau cooldown chạy lại đúng phase nâng,
+      // không cần chờ thêm một chu kỳ mua phôi.
+      if (pendingUpgradeRetry && mode !== "master") pendingUpgradeRetry = false;
+      if (
+        pendingUpgradeRetry &&
+        mode === "master" &&
+        !e006Cooldown.isDeferred(E006_FLOWS.UPGRADE)
+      ) {
+        pendingUpgradeRetry = false;
+        log("E006 [upgrade] hết cooldown; chạy lại Auto Nâng Cấp.");
+        await runUpgradePivot();
+        continue;
+      }
       if (!inventoryKnownAvailable) {
         const now = Date.now();
         if (now < nextInventoryCheckAt) {
@@ -706,6 +860,17 @@ async function main() {
         }
         inventoryKnownAvailable = true;
       }
+      if (e006Cooldown.isDeferred(E006_FLOWS.PHOI_BUY)) {
+        // Chỉ phoi-buy bị hoãn; ICON vẫn chạy nền. Chờ theo lát ngắn để còn
+        // nhận /stopagent và receipt mới, không mở mini-app trong cooldown.
+        await page.waitForTimeout(
+          Math.min(
+            30_000,
+            Math.max(1_000, e006Cooldown.remainingMs(E006_FLOWS.PHOI_BUY))
+          )
+        );
+        continue;
+      }
       log("Đang kiểm tra menu Auto Mua Phôi và mini-app cho chu kỳ tiếp theo.");
       let startAckBaseline;
       let cycleBaselineBeforeStart;
@@ -718,8 +883,11 @@ async function main() {
         menuBackoffSeconds = config.menuBusyRetrySeconds;
         nextMenuAttemptAt = 0;
         if (hasNewBotSystemError(reader.snapshot().text, systemErrorCountBeforeMenu)) {
-          agentActive = false;
-          log("Bot trả E006; agent đã tự dừng và chờ /startagent.");
+          deferE006(E006_FLOWS.PHOI_BUY, null, {
+            message: "Bot trả E006 trước khi bắt đầu Auto Mua Phôi.",
+            source: "controller:pre-start"
+          });
+          await closeMiniApp(page).catch(() => {});
           continue;
         }
         await withTimeout(configureCycle(frame, units), 90_000, "điền cấu hình mini-app");
@@ -733,8 +901,11 @@ async function main() {
           continue;
         }
         if (hasNewBotSystemError(reader.snapshot().text, systemErrorCountBeforeMenu)) {
-          agentActive = false;
-          log("Bot trả E006; agent đã tự dừng và chờ /startagent.");
+          deferE006(E006_FLOWS.PHOI_BUY, null, {
+            message: "Bot trả E006 sau khi mở form Auto Mua Phôi.",
+            source: "controller:pre-click"
+          });
+          await closeMiniApp(page).catch(() => {});
           continue;
         }
         const body = reader.snapshot().text;
@@ -752,8 +923,22 @@ async function main() {
           cycleId: `buy-${cycleStartedAt}`
         });
         if (!buyBegin) {
+          const block = workerSession.blockedReason();
+          const blockers = (block?.workers || [])
+            .map(
+              (worker) =>
+                `${worker.workerId || "?"} (${worker.feature || "?"}, ` +
+                `${worker.state || "?"})`
+            )
+            .join(", ");
+          log(
+            "Registry đang chặn worker mua" +
+              (blockers ? `: ${blockers}` : "") +
+              (block?.reason ? ` [${block.reason}]` : "") +
+              "; agent về idle, không bấm Bắt đầu. " +
+              "Kiểm tra Telegram rồi resolve worker unknown nếu có."
+          );
           agentActive = false;
-          log("Registry đang có worker khác; agent về idle, không bấm Bắt đầu.");
           continue;
         }
         try {
@@ -770,7 +955,10 @@ async function main() {
         workerSession.markRunning("buy");
       } catch (error) {
         workerSession.stop("buy", {
-          unknown: error.code === "START_ACK_UNVERIFIED",
+          // E006 là lỗi token đã biết: không đẩy worker sang unknown, chỉ hoãn
+          // phoi-buy 10 phút ở nhánh xử lý E006 bên dưới.
+          unknown:
+            error.code === "START_ACK_UNVERIFIED" && !isE006Error(error),
           reason: error.code || "start-ack"
         });
         throw error;
@@ -861,7 +1049,8 @@ async function main() {
           "TELEGRAM_NAVIGATED",
           "TELEGRAM_CHAT_UNREADABLE"
         ]);
-        const recoverable = recoverableWorkerErrors.has(error.code);
+        const recoverable =
+          recoverableWorkerErrors.has(error.code) || isE006Error(error);
         for (const feature of ["buy", "upgrade"]) {
           if (!workerSession.isRegistered(feature)) continue;
           workerSession.stop(feature, {
@@ -941,9 +1130,15 @@ async function main() {
         await new Promise((resolve) => setTimeout(resolve, 1_000));
         continue;
       }
-      if (error.code === "BOT_SYSTEM_ERROR") {
-        agentActive = false;
-        log("Bot trả E006; agent đã tự dừng và chờ /startagent.");
+      if (isE006Error(error)) {
+        // E006: chỉ hoãn đúng feature đang lỗi. Không đưa agent về idle, không
+        // đẩy worker sang unknown; feature tự chạy lại sau 10 phút.
+        const flow =
+          identifyE006Flow({ error }) === E006_FLOWS.UNKNOWN
+            ? E006_FLOWS.PHOI_BUY
+            : identifyE006Flow({ error });
+        deferE006(flow, error, { source: "controller:active-catch" });
+        agentActive = true;
         continue;
       }
       // /resetagent từ xa đóng context đang chạy -> thao tác đang dở throw
@@ -1012,6 +1207,7 @@ async function main() {
         // Về idle thì xoá luôn dấu hoàn tất cũ; lần chạy sau phải kiểm tra
         // /stop lại từ đầu thay vì bỏ qua vì tưởng vẫn còn chu kỳ vừa xong.
         pendingBuyCompletion = null;
+        pendingUpgradeRetry = false;
       }
       // Chỉ khi vừa chuyển từ active về idle: bỏ lệnh start còn đọng từ lúc
       // active (vd gửi lúc đang chạy). Lệnh cũ mà chạy theo sẽ tốn tiền thật

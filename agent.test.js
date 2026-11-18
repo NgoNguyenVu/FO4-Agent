@@ -35,6 +35,8 @@ const {
   isEarlyCompletion,
   STALE_COMPLETION_GUARD_MS,
   waitForInventoryReceipt,
+  settleBuyOutcome,
+  INVENTORY_RECEIPT_RETRY_MS,
   hasNewWorkerTokenStop
 } = require("./features/buy");
 const {
@@ -2026,24 +2028,31 @@ test("/starticon keeps monitoring ICON orders on transient E006 instead of re-ad
   const path = require("node:path");
   const runnerSrc = fs.readFileSync(path.join(__dirname, "features/icon-buy/runner.js"), "utf8");
 
-  // Transient token error before any purchase log: keep polling, never re-add.
+  // Transient token error before any purchase log: defer only the ICON flow for
+  // the E006 cooldown window, keep existing tasks and never re-add/stop them.
   const firstE006 = runnerSrc.indexOf('if (/E006|làm mới token/i.test(result.fatalError))');
   const firstCancelDecision = runnerSrc.indexOf('if (reason !== "order-limit")', firstE006);
   assert.ok(firstE006 >= 0, "runner must branch on transient E006 token errors");
   assert.ok(firstCancelDecision > firstE006);
   const firstE006Slice = runnerSrc.slice(firstE006, firstCancelDecision);
   assert.match(firstE006Slice, /giữ nguyên task ICON, không đặt lại/);
-  assert.match(firstE006Slice, /continue;/);
+  assert.match(firstE006Slice, /action: "e006-cooldown"/);
+  assert.match(firstE006Slice, /onE006/);
+  assert.doesNotMatch(firstE006Slice, /continue;/);
   assert.doesNotMatch(firstE006Slice, /stopOrphanIconTasks/);
 
-  // Transient token error after orders were placed: keep the tasks, do not stop.
+  // Transient token error after orders were placed: keep the tasks, do not stop,
+  // and surface the same tagged cooldown result to the controller.
   const secondE006 = runnerSrc.indexOf("E006 là lỗi token tạm thời sau khi đã có đơn");
   const secondCancelDecision = runnerSrc.indexOf('if (reason !== "order-limit")', secondE006);
   assert.ok(secondE006 >= 0);
   assert.ok(secondCancelDecision > secondE006);
   const secondE006Slice = runnerSrc.slice(secondE006, secondCancelDecision);
   assert.match(secondE006Slice, /giữ nguyên các task/);
-  assert.match(secondE006Slice, /continue;/);
+  assert.match(secondE006Slice, /action: "e006-cooldown"/);
+  assert.match(secondE006Slice, /onE006/);
+  assert.doesNotMatch(secondE006Slice, /continue;/);
+  assert.doesNotMatch(secondE006Slice, /stopOrphanIconTasks/);
 });
 
 test("/starticon baseline capture retries the /stop menu read and falls back to polling", () => {
@@ -2294,11 +2303,47 @@ test("waitForInventoryReceipt keeps waiting and returns null when /stopagent arr
   assert.equal(received, null);
 });
 
-test("buy outcome treats a missing inventory receipt as idle instead of crashing", () => {
+test("buy outcome retries a missing inventory receipt instead of idling", async () => {
+  const result = await settleBuyOutcome(
+    null,
+    null,
+    { status: "inventory-full" },
+    { waitForReceipt: async () => null }
+  );
+  assert.equal(INVENTORY_RECEIPT_RETRY_MS, 5 * 60 * 1000);
+  assert.deepEqual(result, {
+    agentActive: true,
+    openNext: false,
+    pivotToUpgrade: false,
+    retryInventoryReceipt: true
+  });
+});
+
+test("buy outcome still pivots after a confirmed inventory receipt", async () => {
+  const result = await settleBuyOutcome(
+    null,
+    null,
+    { status: "inventory-full" },
+    { pivotToUpgrade: true, waitForReceipt: async () => 45 }
+  );
+  assert.equal(result.agentActive, true);
+  assert.equal(result.pivotToUpgrade, true);
+  assert.equal(result.retryInventoryReceipt, undefined);
+});
+
+test("controller keeps retrying an unconfirmed inventory receipt instead of idling", () => {
   const fs = require("node:fs");
   const path = require("node:path");
-  const buyOutcomeSrc = fs.readFileSync(path.join(__dirname, "features/buy/outcome.js"), "utf8");
-  assert.match(buyOutcomeSrc, /if \(received === null\)/);
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  assert.match(controllerSrc, /retryInventoryReceipt/);
+  assert.match(controllerSrc, /INVENTORY_RECEIPT_RETRY_MS/);
+  assert.match(
+    controllerSrc,
+    /nextInventoryCheckAt = Date\.now\(\) \+ INVENTORY_RECEIPT_RETRY_MS/
+  );
 });
 
 test("upgrade reload waits for the mini-app loader before confirming a reload", async () => {
