@@ -109,16 +109,18 @@ test("E006 của ICON được bỏ qua nếu cùng cửa sổ có completion", 
   assert.equal(result.inventoryReceiptSystemErrors, baseline.systemErrors);
 });
 
-test("waitForCycleCompletion dừng khi quá maxCycleWaitMinutes", async () => {
+test("waitForCycleCompletion trả cycle-timeout thay vì ném lỗi khi quá maxCycleWaitMinutes", async () => {
   const initial = "Bắt đầu treo auto mua (worker buy-1)";
   const { page } = harness(initial);
   const baseline = getCycleBaseline(initial);
 
-  await assert.rejects(
-    () =>
-      withMaxCycleWaitMinutes(0.0001, () =>
-        waitForCycleCompletion(page, baseline, initial)
-      ),
-    /Quá thời gian chờ/
+  const result = await withMaxCycleWaitMinutes(0.0001, () =>
+    waitForCycleCompletion(page, baseline, initial)
   );
+
+  // Timeout phải là outcome recoverable để controller tự dọn worker và chạy
+  // tiếp; không được ném lỗi khiến controller đẩy worker buy sang unknown.
+  assert.equal(result.status, "cycle-timeout");
+  assert.equal(typeof result.waitedMs, "number");
+  assert.ok(result.waitedMinutes >= 1);
 });

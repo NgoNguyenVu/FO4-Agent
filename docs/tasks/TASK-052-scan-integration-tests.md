@@ -53,7 +53,7 @@ Truy vấn scan v5 tập trung vào nhánh lỗi/terminal chưa có test hành v
 | 4 | Worker token stop | `system-error`, `reason = worker-token-stop` |
 | 5 | `/stopagent` trong lúc chờ | `stop-requested` |
 | 6 | E006 + completion, `isIgnorableSystemError` | `completed`, giữ baseline system errors |
-| 7 | Quá `maxCycleWaitMinutes` | Ném lỗi `Quá thời gian chờ` |
+| 7 | Quá `maxCycleWaitMinutes` | Trả `cycle-timeout` để controller tự recovery, không dừng agent |
 | 8 | Prompt trả lời có khoảng trắng | Trim đúng |
 | 9 | `wakePendingPrompt` | Resolve `""`, không lỗi khi không có prompt |
 | 10 | `rl.question` ném lỗi | Promise reject |

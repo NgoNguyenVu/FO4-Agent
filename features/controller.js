@@ -64,6 +64,7 @@ const {
   waitForCycleCompletion,
   settleBuyOutcome,
   INVENTORY_RECEIPT_RETRY_MS,
+  BUY_TIMEOUT_RECOVERY_COOLDOWN_MS,
   createBuyCompletionRecord,
   getTradeFrame,
   configureCycle,
@@ -454,6 +455,23 @@ async function main() {
       completedLog,
       ui
     });
+    if (next.retryInventoryCheck) {
+      // Chu kỳ mua vượt maxCycleWaitMinutes đã được dọn an toàn: giữ agent
+      // sống, kiểm tra lại kho ICON sau cooldown ngắn rồi chạy tiếp nếu còn
+      // ICON nâng được. Chỉ dừng chu kỳ mua/nâng khi kho xác nhận eligible = 0.
+      inventoryKnownAvailable = false;
+      nextInventoryCheckAt =
+        Date.now() +
+        Math.max(
+          1_000,
+          next.inventoryCheckDelayMs || BUY_TIMEOUT_RECOVERY_COOLDOWN_MS
+        );
+      // Buộc vòng sau kiểm tra /stop trước khi mở chu kỳ mới: recovery có thể
+      // chưa dừng được worker nếu bot chậm, nên không bấm chồng.
+      initialWorkerCheckDone = true;
+      agentActive = true;
+      return false;
+    }
     if (next.retryInventoryReceipt) {
       // Bot báo kho đầy nhưng chưa xác nhận nhận cầu thủ: không đưa agent về
       // idle và không mở chu kỳ mua mới ngay. Coi kho là chưa xác định, kiểm
@@ -1021,7 +1039,9 @@ async function main() {
           );
         }
       }
-      workerSession.stop("buy", { reason: "completed" });
+      workerSession.stop("buy", {
+        reason: outcome.status === "cycle-timeout" ? "cycle-timeout" : "completed"
+      });
       rememberBuyCompletion(outcome, "agent-worker");
       const openNext = await handleBuyOutcome(
         outcome,
@@ -1047,7 +1067,9 @@ async function main() {
           "UPGRADE_MODE_LOAD_TIMEOUT",
           "BOT_SYSTEM_ERROR",
           "TELEGRAM_NAVIGATED",
-          "TELEGRAM_CHAT_UNREADABLE"
+          "TELEGRAM_CHAT_UNREADABLE",
+          "STOP_CHECK_TIMEOUT",
+          "STOP_CONFIRM_TIMEOUT"
         ]);
         const recoverable =
           recoverableWorkerErrors.has(error.code) || isE006Error(error);
@@ -1068,6 +1090,26 @@ async function main() {
           `${error.userMessage || "Chưa lấy được menu chức năng."} ` +
           "Giữ agent ở trạng thái chạy, không dừng worker và sẽ thử lại sau " +
           `${backoffSeconds} giây (giãn dần, tối đa 5 phút).`
+        );
+        continue;
+      }
+      if (
+        error.code === "STOP_CHECK_TIMEOUT" ||
+        error.code === "STOP_CONFIRM_TIMEOUT"
+      ) {
+        // Bot/Telegram không trả lời /stop hoặc /stopauto kịp: lỗi tạm thời,
+        // không phải worker hỏng. Giữ agent sống, coi kho là chưa xác định và
+        // kiểm tra lại sau cooldown ngắn thay vì dừng cả agent.
+        inventoryKnownAvailable = false;
+        nextInventoryCheckAt =
+          Date.now() + BUY_TIMEOUT_RECOVERY_COOLDOWN_MS;
+        agentActive = true;
+        log(
+          `${error.userMessage || error.message} ` +
+            "Đây là lỗi tạm thời của bot/Telegram; giữ agent sống và kiểm tra " +
+            `lại kho ICON sau ${Math.round(
+              BUY_TIMEOUT_RECOVERY_COOLDOWN_MS / 1_000
+            )} giây.`
         );
         continue;
       }

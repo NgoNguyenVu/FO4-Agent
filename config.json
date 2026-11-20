@@ -1,7 +1,7 @@
 {
   "ovrMin": 118,
   "ovrMax": 123,
-  "maxPriceBP": 777777,
+  "maxPriceBP": 888888,
   "quantityPerAttempt": 3,
   "maxPerCycle": 14,
   "maxCycleWaitMinutes": 240,
@@ -11,7 +11,7 @@
   "upgradeFrameTimeoutSeconds": 30,
   "upgrade": {
     "targetGrade": 7,
-    "ovrPhoi": "118",
+    "ovrPhoi": "118,119,120",
     "maxPriceEach": "2M",
     "waitMs": 5000,
     "minRatio": 74,
@@ -24,7 +24,7 @@
     "maxPlayersPerBatch": 3,
     "grade": 1,
     "quantity": 1,
-    "cancelPositionAbove": 3,
+    "cancelPositionAbove": 2,
     "favoritesTimeoutSeconds": 60,
     "purchaseTimeoutSeconds": 0,
     "purchaseSoftTimeoutSeconds": 1800,

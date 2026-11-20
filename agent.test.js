@@ -37,6 +37,7 @@ const {
   waitForInventoryReceipt,
   settleBuyOutcome,
   INVENTORY_RECEIPT_RETRY_MS,
+  BUY_TIMEOUT_RECOVERY_COOLDOWN_MS,
   hasNewWorkerTokenStop
 } = require("./features/buy");
 const {
@@ -2343,6 +2344,110 @@ test("controller keeps retrying an unconfirmed inventory receipt instead of idli
   assert.match(
     controllerSrc,
     /nextInventoryCheckAt = Date\.now\(\) \+ INVENTORY_RECEIPT_RETRY_MS/
+  );
+});
+
+test("buy outcome recovers a cycle timeout instead of stopping the agent", async () => {
+  // Quá maxCycleWaitMinutes: đóng mini-app, xác minh /stop, dừng worker nếu còn
+  // chạy, rồi giữ agent sống để kiểm tra lại kho sau cooldown ngắn.
+  const calls = [];
+  const result = await settleBuyOutcome(
+    null,
+    null,
+    { status: "cycle-timeout", waitedMs: 241 * 60_000, waitedMinutes: 241 },
+    {
+      closeApp: async () => calls.push("close"),
+      checkRunning: async () => ({ running: true }),
+      stopWorker: async () => calls.push("stopauto")
+    }
+  );
+  assert.equal(BUY_TIMEOUT_RECOVERY_COOLDOWN_MS, 45_000);
+  assert.deepEqual(calls, ["close", "stopauto"]);
+  assert.equal(result.agentActive, true);
+  assert.equal(result.openNext, false);
+  assert.equal(result.pivotToUpgrade, false);
+  assert.equal(result.retryInventoryCheck, true);
+  assert.equal(result.inventoryCheckDelayMs, BUY_TIMEOUT_RECOVERY_COOLDOWN_MS);
+});
+
+test("buy cycle timeout does not send /stopauto when /stop confirms the worker stopped", async () => {
+  const calls = [];
+  const result = await settleBuyOutcome(
+    null,
+    null,
+    { status: "cycle-timeout" },
+    {
+      closeApp: async () => calls.push("close"),
+      checkRunning: async () => ({ running: false }),
+      stopWorker: async () => calls.push("stopauto")
+    }
+  );
+  assert.deepEqual(calls, ["close"]);
+  assert.equal(result.agentActive, true);
+  assert.equal(result.retryInventoryCheck, true);
+});
+
+test("buy cycle timeout still recovers when /stop verification times out", async () => {
+  const calls = [];
+  const failure = Object.assign(new Error("stop timeout"), {
+    code: "STOP_CHECK_TIMEOUT"
+  });
+  const result = await settleBuyOutcome(
+    null,
+    null,
+    { status: "cycle-timeout" },
+    {
+      closeApp: async () => calls.push("close"),
+      checkRunning: async () => {
+        throw failure;
+      },
+      stopWorker: async () => calls.push("stopauto")
+    }
+  );
+  // Không xác minh được /stop thì vẫn thử dừng worker để tránh mua chồng,
+  // nhưng tuyệt đối không ném lỗi hay đưa agent về idle.
+  assert.deepEqual(calls, ["close", "stopauto"]);
+  assert.equal(result.agentActive, true);
+  assert.equal(result.retryInventoryCheck, true);
+});
+
+test("controller keeps the agent alive and rechecks inventory after a buy cycle timeout", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  assert.match(controllerSrc, /retryInventoryCheck/);
+  assert.match(
+    controllerSrc,
+    /next\.inventoryCheckDelayMs \|\| BUY_TIMEOUT_RECOVERY_COOLDOWN_MS/
+  );
+  assert.match(controllerSrc, /"STOP_CHECK_TIMEOUT"/);
+  assert.match(controllerSrc, /"STOP_CONFIRM_TIMEOUT"/);
+  assert.match(
+    controllerSrc,
+    /outcome\.status === "cycle-timeout" \? "cycle-timeout" : "completed"/
+  );
+});
+
+test("zero upgradeable ICONs pauses buy/upgrade without stopping the agent", () => {
+  // Mọi ICON đã đạt target hoặc bị khóa: không mở chu kỳ mua phôi mới.
+  assert.equal(
+    decideInventoryAction({ total: 3, eligible: 0, locked: 2, reachedTarget: 1 }),
+    "wait-new-icon"
+  );
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  // Controller chỉ mua khi eligible > 0; ngược lại giữ agent sống và hẹn
+  // kiểm tra lại, không đặt agentActive = false.
+  assert.match(
+    controllerSrc,
+    /if \(decideInventoryAction\(inventory\) === "buy"\) return true;/
   );
 });
 

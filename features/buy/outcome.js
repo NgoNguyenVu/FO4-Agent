@@ -4,15 +4,73 @@
 const { log } = require("../agent-log");
 const { CONTROL_MODE_BY_COMMAND } = require("../../lib/control-commands");
 const {
+  checkAutoBuyRunning,
   stopPurchaseWorker,
   waitForInventoryReceipt
 } = require("./cycle");
+const { closeMiniApp } = require("../telegram-io");
 const { idleOutcomeMessage } = require("./patterns");
 
 // Bot báo kho đầy nhưng chưa xác nhận nhận cầu thủ: không đưa cả agent về idle
 // và bắt người dùng gửi /startagent. Giữ vòng ACTIVE sống, chờ đúng 5 phút rồi
 // kiểm tra lại kho/`/stop`; chỉ mua tiếp khi trạng thái đã an toàn.
 const INVENTORY_RECEIPT_RETRY_MS = 5 * 60 * 1000;
+
+// Chu kỳ mua vượt maxCycleWaitMinutes: không bỏ cuộc mà đóng mini-app, xác minh
+// /stop, dừng worker nếu còn chạy rồi quay lại vòng chính sau cooldown ngắn để
+// kiểm tra lại kho ICON. 45 giây đủ để bot nhả task và tránh mở chu kỳ chồng.
+const BUY_TIMEOUT_RECOVERY_COOLDOWN_MS = 45 * 1000;
+
+// Dọn an toàn worker mua sau timeout. Mọi lỗi mạng/bot ở bước này chỉ được log
+// và bỏ qua: agent phải sống tiếp để kiểm tra lại kho, không rơi vào unknown.
+async function recoverTimedOutCycle(
+  page,
+  rl,
+  {
+    ui = null,
+    checkRunning = checkAutoBuyRunning,
+    stopWorker = stopPurchaseWorker,
+    closeApp = closeMiniApp,
+    logFn = log
+  } = {}
+) {
+  const withLock = (fn) => (ui ? ui.withLock(fn) : fn());
+  try {
+    await closeApp(page, "Auto Mua Phôi");
+  } catch (error) {
+    logFn(`Không đóng được mini-app sau timeout (bỏ qua): ${error.message}`);
+  }
+
+  let running = null;
+  let checkFailed = false;
+  try {
+    const status = await withLock(() => checkRunning(page, rl));
+    running = Boolean(status?.running);
+  } catch (error) {
+    checkFailed = true;
+    logFn(
+      `Không xác minh được trạng thái worker sau timeout ` +
+        `(${error.code || error.message}); vẫn thử dừng worker để tránh mua chồng.`
+    );
+  }
+
+  if (running === true || checkFailed) {
+    try {
+      await withLock(() => stopWorker(page, rl));
+      logFn("Đã xác nhận worker Mua phôi dừng sau timeout; sẽ kiểm tra lại kho ICON.");
+    } catch (error) {
+      logFn(
+        `Chưa xác nhận được việc dừng worker sau timeout ` +
+          `(${error.code || error.message}); agent vẫn sống và sẽ kiểm tra /stop lại ` +
+          "trước khi mở chu kỳ mới."
+      );
+    }
+  } else {
+    logFn("Kiểm tra /stop sau timeout xác nhận worker Mua phôi đã dừng; không bấm chồng.");
+  }
+
+  return { running };
+}
 
 async function settleBuyOutcome(
   page,
@@ -22,9 +80,41 @@ async function settleBuyOutcome(
     pivotToUpgrade = false,
     completedLog = "",
     ui = null,
-    waitForReceipt = waitForInventoryReceipt
+    waitForReceipt = waitForInventoryReceipt,
+    checkRunning = checkAutoBuyRunning,
+    stopWorker = stopPurchaseWorker,
+    closeApp = closeMiniApp,
+    recoveryCooldownMs = BUY_TIMEOUT_RECOVERY_COOLDOWN_MS
   } = {}
 ) {
+  if (outcome.status === "cycle-timeout") {
+    const waitedMinutes =
+      outcome.waitedMinutes ??
+      Math.max(1, Math.round((outcome.waitedMs || 0) / 60_000));
+    log(
+      `Chu kỳ Mua phôi vượt ${waitedMinutes} phút; tự recovery: đóng mini-app, ` +
+        "xác minh /stop, dừng worker nếu còn chạy rồi kiểm tra lại kho ICON."
+    );
+    await recoverTimedOutCycle(page, rl, {
+      ui,
+      checkRunning,
+      stopWorker,
+      closeApp,
+      logFn: log
+    });
+    log(
+      `Giữ agent sống; kiểm tra lại kho ICON sau ` +
+        `${Math.round(recoveryCooldownMs / 1_000)} giây rồi tiếp tục chu kỳ nếu ` +
+        "còn ICON nâng được lên target."
+    );
+    return {
+      agentActive: true,
+      openNext: false,
+      pivotToUpgrade: false,
+      retryInventoryCheck: true,
+      inventoryCheckDelayMs: recoveryCooldownMs
+    };
+  }
   if (outcome.status === "stop-requested") {
     const restart = ui
       ? await ui.withLock(() => stopPurchaseWorker(page, rl))
@@ -93,5 +183,7 @@ function createBuyCompletionRecord(outcome, source) {
 module.exports = {
   settleBuyOutcome,
   createBuyCompletionRecord,
-  INVENTORY_RECEIPT_RETRY_MS
+  recoverTimedOutCycle,
+  INVENTORY_RECEIPT_RETRY_MS,
+  BUY_TIMEOUT_RECOVERY_COOLDOWN_MS
 };

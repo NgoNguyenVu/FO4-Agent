@@ -194,11 +194,16 @@ async function checkAutoBuyRunning(page, rl) {
     snapshot = update;
   }
   const response = snapshot.text.slice(-1_000).replace(/\s+/g, " ").trim();
-  throw new Error(
+  const error = new Error(
     `Không xác định được trạng thái Auto Mua Phôi sau /stop trong ` +
       `${config.botResponseTimeoutMinutes} phút; agent không khởi chạy chu kỳ mới. ` +
       `Phản hồi gần nhất: ${response || "(trống)"}`
   );
+  // Lỗi tạm thời của bot/Telegram, không phải worker hỏng: controller phải giữ
+  // agent sống và thử lại thay vì đẩy worker sang unknown rồi dừng cả agent.
+  error.code = "STOP_CHECK_TIMEOUT";
+  error.userMessage = error.message;
+  throw error;
 }
 
 // Chờ chu kỳ hiện tại kết thúc: completed | purchase-stopped | inventory-full | system-error | stop-requested
@@ -227,10 +232,21 @@ async function waitForCycleCompletion(
   let snapshot = reader.snapshot();
   while (true) {
     if (Date.now() - startedAt > config.maxCycleWaitMinutes * 60_000) {
-      throw new Error(
-        `Quá thời gian chờ | chưa thấy tin hoàn tất sau ` +
-          `${config.maxCycleWaitMinutes} phút; agent dừng, không tự khởi chạy lại.`
+      // Không ném lỗi và không đẩy worker sang unknown: controller sẽ tự
+      // recovery (đóng mini-app, xác minh /stop, dừng worker nếu còn chạy) rồi
+      // quay lại kiểm tra kho ICON sau cooldown ngắn. Chu kỳ chỉ thực sự dừng
+      // khi kho xác nhận không còn ICON nào nâng được lên target.
+      const waitedMs = Date.now() - startedAt;
+      const waitedMinutes = Math.max(
+        1,
+        Math.round(waitedMs / 60_000)
       );
+      log(
+        `Chu kỳ Mua phôi vượt ${config.maxCycleWaitMinutes} phút (đã chờ ` +
+          `${waitedMinutes} phút) mà chưa thấy tin hoàn tất; ` +
+          "không dừng agent, chuyển sang tự recovery."
+      );
+      return { status: "cycle-timeout", waitedMs, waitedMinutes };
     }
     if (reader.takeCommand("stopagent")) return { status: "stop-requested" };
     const fresh = getFreshSince(freshBaselineText, snapshot.text);
@@ -428,9 +444,14 @@ async function stopPurchaseWorker(page, rl) {
     if (!update) break;
     snapshot = update;
   }
-  throw new Error(
+  const error = new Error(
     `Đã gửi /stopauto nhưng không nhận xác nhận dừng trong ${config.botResponseTimeoutMinutes} phút.`
   );
+  // Bot/Telegram không trả lời kịp: giữ agent sống để tự kiểm tra lại, không
+  // coi worker là unknown và không dừng cả agent.
+  error.code = "STOP_CONFIRM_TIMEOUT";
+  error.userMessage = error.message;
+  throw error;
 }
 
 // Worker bị nghi ngờ đang chạy (guard positional) nhưng /stop không xác nhận:

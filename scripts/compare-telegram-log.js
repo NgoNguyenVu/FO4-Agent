@@ -91,6 +91,19 @@ function formatIconStats(report) {
       : `Nâng cấp +7 : ${upgrade.successes} lượt thành công / ${upgrade.uniquePlayers} cầu thủ; ` +
         `${upgrade.attempts} lượt thử`
   ];
+  if (
+    !report.range?.session &&
+    !report.range?.since &&
+    !report.range?.until &&
+    (report.range?.sessionCount ?? 0) > 1
+  ) {
+    lines.splice(
+      4,
+      0,
+      `Gợi ý       : log có ${report.range.sessionCount} phiên /startagent; ` +
+        "thêm --session để chỉ xem phiên mới nhất."
+    );
+  }
   if (inventory && inventory.found) {
     const details =
       inventory.upgradable === null

@@ -53,7 +53,7 @@ sequenceDiagram
   W-->>T: "Bắt đầu treo auto mua (worker ...)"
   B->>T: read start acknowledgement
   B->>M: closeMiniApp()
-  loop until terminal, /stopagent, or timeout
+  loop until terminal, /stopagent, or timeout (auto-recovery)
     B->>T: read fresh chat text
   end
   B-->>C: outcome
@@ -250,6 +250,8 @@ Code: `features/buy/cycle.js#waitForCycleCompletion`, `features/buy/patterns.js`
 
 Maximum wait: `maxCycleWaitMinutes` (240 min; the bot's hold can reach ~180 min, so the cap must be above it).
 
+When the cap is reached `waitForCycleCompletion` returns `{ status: "cycle-timeout", waitedMs, waitedMinutes }` instead of throwing. `settleBuyOutcome` then closes the mini-app, verifies `/stop`, sends `/stopauto` only when a worker is still running (or verification failed), keeps the agent alive and rechecks the ICON inventory after a 45 s cooldown (`BUY_TIMEOUT_RECOVERY_COOLDOWN_MS`). The buy/upgrade cycle is paused only when the inventory read confirms `eligible === 0` (every ICON is already at target, locked, or the inventory is empty).
+
 ### Terminal signals, in priority order
 
 1. `/stopagent` command → `{ status: "stop-requested" }`
@@ -271,7 +273,7 @@ Bare "Đã dừng N luồng thành công" is deliberately **not** used as an orp
 
 The ICON flow shares the same Telegram chat as Auto Mua Phôi. When ICON sends `/tn`, clicks a feature button, or sends a purchase list, the bot can answer that request with E006. `lib/icon-activity.js` records the time of those actions; a new E006 is ignored by the buy waiter when it arrives within `ICON_E006_ATTRIBUTION_MS` (120 s) of an ICON action. The ignored error is logged, the error baseline advances, and the waiter keeps looking for real cycle signals. A completion arriving in the same window — including `Hết thời gian treo. Hoàn thành mua N cầu thủ` — is still accepted, so a finished cycle is not lost.
 
-Without recent ICON activity, E006 keeps its old meaning: the buy cycle ends as `system-error` and the agent goes idle until `/startagent`. The explicit `Worker dừng do không thể làm mới token sau N lần thử` message is always terminal, regardless of recent ICON activity.
+Without recent ICON activity, a new E006 ends the buy cycle as `system-error`; the controller then defers only the buy flow for 10 minutes and keeps the agent alive so ICON and other flows continue. The explicit `Worker dừng do không thể làm mới token sau N lần thử` message is always terminal, regardless of recent ICON activity.
 
 ### Chat patterns used
 
@@ -384,7 +386,7 @@ stateDiagram-v2
 | `maxPriceBP` | 777777 | Max price written to the BP field |
 | `quantityPerAttempt` | 3 | Players per purchase attempt (validator allows ≤5) |
 | `maxPerCycle` | 14 | Players per buy cycle / mini-app 4th field |
-| `maxCycleWaitMinutes` | 240 | Hard cap on waiting for a cycle terminal; must exceed the bot's ~180 min hold |
+| `maxCycleWaitMinutes` | 240 | Hard cap on waiting for a cycle terminal; must exceed the bot's ~180 min hold. On expiry the agent auto-recovers and rechecks inventory after 45 s instead of stopping |
 | `botResponseTimeoutMinutes` | 5 | `/stop`, `/stopauto`, inventory receipt, menu/body deadlines |
 | `menuResponseTimeoutSeconds` | 45 | `/tn` menu deadline |
 | `menuBusyRetrySeconds` | 15 | First `MENU_BUSY` backoff; doubles to 300 s |
@@ -397,5 +399,6 @@ stateDiagram-v2
 - A terminal found in old scrolled history is verified at the chat tail before acceptance.
 - If the start click is dropped, the agent retries only when `/stop` proves no worker exists; if it cannot verify, it reopens Telegram instead of clicking blindly.
 - The mini-app is closed after acknowledgement so it cannot cover the Telegram composer.
-- E006 always returns the agent to idle; it never loops on the bot.
+- E006 defers only the affected flow for 10 minutes and keeps the agent alive; it never puts the agent into a blocking idle state.
+- A cycle that exceeds `maxCycleWaitMinutes` is recovered automatically (mini-app closed, `/stop` verified, worker stopped if needed) and inventory is rechecked after 45 s; the agent only pauses buying when no ICON can still be upgraded.
 - `/stop` is used only to read status. The code explicitly never clicks a `/stop` menu option or uses `/stop` to stop a worker.
