@@ -21,7 +21,35 @@ npm.cmd install
 npm.cmd start
 ```
 
-Dang nhap Telegram Web thu cong o lan chay dau tien. Profile duoc luu tai:
+Khi mo CMD truc tiep (`start-agent.cmd` hoac `npm start`), agent hien menu:
+
+```
+Chon che do khoi chay:
+  [1] San ICON + Mua phoi & Nang +7 (mac dinh)
+  [2] Chi san dat mua ICON
+Nhan Enter de chon mac dinh.
+```
+
+Bam `1`/`2` (hoac `Enter` = [1]) truoc khi agent tao `agent.lock` hoac mo trinh
+duyet. Ctrl+C o man hinh nay thoat ngay, khong tao lock.
+
+Sau khi chon mode va Telegram Web san sang, agent **tu dong bat dau chay** theo
+mode do (log: `Agent READY` -> `Tu dong bat dau chay che do [1]/[2]...`), KHONG
+can go `/startagent` them lan nua. `/stopagent` de tam dung, `/startagent` de
+chay lai, `/resetagent` de khoi phuc phien (va tu chay lai neu truoc do dang chay).
+
+Bo qua phan hoi phim bang co `--mode`:
+
+```powershell
+node agent.js --mode icon-only
+npm start -- --mode icon-combo
+start-agent.cmd --mode icon-only
+```
+
+Lenh dieu khien trong chat bot chi tac dong den module cua mode dang chay;
+vi du `/stopagent` o `icon-only` chi dung luong san ICON, khong goi /stopauto.
+
+Lan dau chay can dang nhap Telegram Web thu cong. Profile duoc luu tai:
 
 `%LOCALAPPDATA%\FO4PurchaseAgent\telegram-profile`
 
@@ -37,6 +65,27 @@ neu khong doc duoc vi tri thi giu don de tranh huy nham. Cac gioi han gia, OVR,
 cap nang va thoi gian cho duoc dat trong [config.json](./config.json). De bat dau
 tu dau, copy `config.example.json` -> `config.json` roi chinh cac gia tri OVR/gia
 cho tai khoan cua ban (agent khong tu y mở rộng dải phôi).
+
+## Them che do khoi chay moi
+
+Mo `lib/launch-modes.js` va them MOT entry doc lap vao mang `LAUNCH_MODES`.
+Khong sua cac entry [1]/[2] va khong them module moi vao `features` cua [1]
+neu ban muon no chay rieng:
+
+```js
+Object.freeze({
+  id: 3,
+  key: "chi-kiem-ke",
+  label: "Chi kiem ke kho (vi du)",
+  description: "Khong mua, khong dang nhap lenh; chi doc kho.",
+  features: Object.freeze(["inventory-read"]),
+  default: false
+})
+```
+
+Sau do them nhanh `if (enabledFeatures.has("inventory-read")) { ... }` trong
+`features/controller.js`. Menu se tu hien them `[3]`; khong co co che nao tu dong
+gom entry moi vao mode mac dinh.
 
 ## Van hanh & shutdown
 

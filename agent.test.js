@@ -1891,7 +1891,7 @@ test("controller runs the unified ICON-to-upgrade flow", () => {
   assert.match(src, /const\s*\{\s*createUiLock\s*\}\s*=\s*require\("\.\.\/lib\/ui-lock"\)/);
   assert.match(src, /runIconBuy\(page, rl, \{/);
   assert.match(src, /ensureIconMonitor\(\)/);
-  assert.match(src, /có ICON trong kho thì chạy mua phôi và nâng/);
+  assert.match(src, /có ICON trong kho thì mua phôi và nâng/);
   assert.doesNotMatch(src, /createIconSession|startIconSession|iconSession/);
   assert.doesNotMatch(src, /mode\s*===\s*"icon"/);
   assert.doesNotMatch(src, /mode\s*=\s*"icon"/);
@@ -3079,6 +3079,51 @@ test("/resetagent is handled before E006 classification and wakes every prompt",
   assert.ok(resetAt > 0 && e006At > resetAt, "reset phải đứng trước E006");
   assert.match(controllerSrc, /wakeAllPendingPrompts\(\)/);
   assert.doesNotMatch(controllerSrc, /if \(isWaitingForPrompt\(\)\) wakePendingPrompt\(\)/);
+});
+
+test("selected mode auto-starts on launch and resumes after reset", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  const readyAt = src.indexOf("Agent READY");
+  const autoAt = src.indexOf('activateSelectedMode("launch")');
+  const loopAt = src.indexOf("while (true)", readyAt);
+  assert.ok(readyAt > 0 && autoAt > readyAt && loopAt > autoAt);
+  assert.match(src, /Tự động khởi động theo mode đã chọn/);
+  assert.match(src, /Tự động bắt đầu chạy chế độ \[/);
+  assert.match(src, /autoResumeAfterReset = agentActive/);
+  assert.match(src, /if \(shouldResume\) activateSelectedMode\("reset"\)/);
+  assert.match(src, /activateSelectedMode\("command"\)/);
+  // Không còn thông báo bắt người dùng gõ /startagent lúc READY.
+  const readyBlock = src.slice(readyAt, readyAt + 400);
+  assert.doesNotMatch(readyBlock, /Đang chờ \/startagent/);
+});
+
+test("controller gates every module by the selected launch mode features", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  assert.match(controllerSrc, /getLaunchMode\(launchMode\)/);
+  assert.match(controllerSrc, /iconEnabled = enabledFeatures\.has\("icon-buy"\)/);
+  assert.match(
+    controllerSrc,
+    /buyUpgradeEnabled = enabledFeatures\.has\("buy-upgrade"\)/
+  );
+  // icon-only branch exists before any buy/upgrade work.
+  const iconOnlyAt = controllerSrc.indexOf("if (!buyUpgradeEnabled) {", controllerSrc.indexOf("IDLE: chờ lệnh"));
+  const buyFlowAt = controllerSrc.indexOf("Đang kiểm tra menu Auto Mua Phôi");
+  assert.ok(iconOnlyAt > 0 && buyFlowAt > iconOnlyAt);
+  // No unconditional master/everything mode left.
+  assert.doesNotMatch(controllerSrc, /mode\s*=\s*"master"\s*;\s*$/m);
+  assert.match(controllerSrc, /mode = buyUpgradeEnabled \? "master" : resolvedMode\.key/);
+  assert.match(controllerSrc, /if \(iconEnabled\) \{[\s\S]*?stopIconMonitor\(\`shutdown/);
+  assert.match(controllerSrc, /if \(agentActive && buyUpgradeEnabled\)/);
 });
 
 test("UI lock covers only /stop send, not the 5-minute bot reply wait", () => {

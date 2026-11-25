@@ -27,7 +27,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-call npm start
+rem Truyen --mode icon-only / icon-combo (neu co) thang vao agent.js.
+call npm start %*
 set "AGENT_EXIT=%ERRORLEVEL%"
 echo.
 echo Agent exited with code %AGENT_EXIT%.

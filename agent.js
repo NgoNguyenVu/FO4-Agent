@@ -4,6 +4,7 @@ const { config } = require("./features/config");
 const { dataDir, log, logError } = require("./features/agent-log");
 const { getLifecycle } = require("./lib/lifecycle");
 const { getWorkerRegistry } = require("./lib/worker-registry");
+const { resolveLaunchMode } = require("./lib/launch-cli");
 
 // `runAgent()` chạy vòng điều khiển nội bộ (main) và tự xử lý mọi lỗi có thể
 // phục hồi (E006, mất session, timeout...) ngay trong vòng lặp của nó. Vì vậy nó
@@ -18,14 +19,9 @@ const lifecycle = getLifecycle({
   // Heartbeat/state nằm ngoài repo để `git status` vẫn sạch.
   heartbeatPath: path.join(dataDir, "state", "heartbeat.json")
 });
+// Cài handler SIGINT ngay từ đầu: Ctrl+C ở màn hình chọn số thoát sạch trước khi
+// agent.lock được tạo hoặc trình duyệt được mở.
 lifecycle.installSignalHandlers();
-lifecycle.startHeartbeat({
-  pid: process.pid,
-  startedAt: new Date().toISOString(),
-  version: require("./package.json").version,
-  mode: null,
-  activeWorkerId: null
-});
 
 const registry = getWorkerRegistry({
   statePath: path.join(dataDir, "state", "workers.json"),
@@ -52,6 +48,18 @@ function stopProcessLockHeartbeat() {
 }
 
 async function main() {
+  // Chọn mode TRƯỚC mọi tài nguyên (lock, heartbeat, browser). Ctrl+C ở menu
+  // được lifecycle xử lý nên không để lại agent.lock hay tiến trình Chromium.
+  let launchMode;
+  try {
+    launchMode = await resolveLaunchMode();
+  } catch (error) {
+    logError(`Không xác định được chế độ khởi chạy: ${error.message}`);
+    process.exitCode = 2;
+    return;
+  }
+  log(`Chế độ khởi chạy: [${launchMode.id}] ${launchMode.key} — ${launchMode.label}`);
+
   try {
     registry.acquireProcessLock();
   } catch (error) {
@@ -59,6 +67,13 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  lifecycle.startHeartbeat({
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    version: require("./package.json").version,
+    mode: launchMode.key,
+    activeWorkerId: null
+  });
   startProcessLockHeartbeat();
   lifecycle.register({
     name: "process-lock",
@@ -70,7 +85,7 @@ async function main() {
 
   for (let attempt = 0; attempt <= MAX_STARTUP_RETRIES; attempt += 1) {
     try {
-      await runAgent();
+      await runAgent({ launchMode: launchMode.key });
       return;
     } catch {
       // Lỗi đã được runAgent ghi log; ở đây chỉ quyết định thử lại.
