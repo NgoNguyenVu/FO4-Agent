@@ -137,7 +137,7 @@
 
 - **Trạng thái:** **WONT_DO (Owner 2026-11-15)** — Owner xác nhận không có nhu cầu triển khai Stage B; **không nhắc lại ở các cycle sau**.
 - **Nhóm:** Kiểm soát chi tiêu
-- **Ghi chú:** Stage A (`lib/spend-guard.js` + config `spendLimits`, chưa enforcement) vẫn giữ nguyên trong code nhưng không bật.
+- **Ghi chú:** Stage A đã được dọn bỏ cùng `lib/spend-guard.js`, config `spendLimits`/`liveTrading` để tránh hiểu nhầm đang có hard cap. Chỉ còn `maxPriceBP` / `maxPerCycle` ở mức lượt mua.
 - **Bằng chứng:**
   - README dòng 40–42: agent **không áp đặt lifetime BP budget**; bot/account balance quyết định.
   - `config.json` có `maxPriceBP` và `maxPerCycle`, nhưng không có cap theo run/ngày/tuần.

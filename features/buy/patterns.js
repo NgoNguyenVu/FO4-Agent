@@ -20,9 +20,11 @@ const {
 const {
   countMatches,
   lastPatternIndex,
-  getFreshSince
+  getFreshSince,
+  hasFreshSignal
 } = require("../../lib/text-utils");
 const { countBotSystemErrors, stripBotSystemErrors } = require("../../lib/bot-signals");
+const { parseBp } = require("../../lib/price-utils");
 
 // Một chu kỳ mua 14 cầu thủ không thể xong sau vài giây. Tin hoàn tất xuất
 // hiện quá sớm thường là tin cũ của chu kỳ trước bị Telegram/observer phát lại;
@@ -249,15 +251,6 @@ function getOrphanCycleOutcome(text, baselineHadActivity) {
     return { status: "inventory-full" };
   }
   return null;
-}
-
-function parseBp(raw) {
-  const digits = raw.replace(/[.,\s]/g, "");
-  const amount = Number(digits);
-  if (!Number.isSafeInteger(amount) || amount < 0) {
-    throw new Error(`Không đọc được giá BP hợp lệ: ${raw}`);
-  }
-  return amount;
 }
 
 function countStartedNotices(text) {
@@ -527,8 +520,7 @@ function getFeatureMenuAction(text) {
 }
 
 function hasFreshFeatureMenu(baselineText, currentText) {
-  const fresh = getFreshSince(baselineText || "", currentText || "");
-  return Boolean(fresh && hasRecentFeatureMenu(fresh));
+  return hasFreshSignal(baselineText || "", currentText || "", hasRecentFeatureMenu);
 }
 
 // Worker Auto Mua Phôi vừa dừng vì token (terminal thật của chu kỳ).

@@ -140,9 +140,22 @@ async function waitForUpgradeCompletion(page, baseline, baselineText = null, tim
   let snapshot = reader.snapshot();
   while (true) {
     if (Date.now() - startedAt > limitMs) {
-      throw new Error(
-        `Quá thời gian chờ nâng cấp sau ${Math.round(limitMs / 60_000)} phút; dừng, không tự chạy lại.`
+      // Không ném lỗi: timeout là tín hiệu recovery, không phải lỗi chí mạng.
+      // Controller/application sẽ đóng mini-app, giữ agent sống, chờ cooldown
+      // ngắn rồi kiểm tra lại kho ICON (và adopt worker nếu bot vẫn còn chạy).
+      const waitedMs = Date.now() - startedAt;
+      const waitedMinutes = Math.max(1, Math.round(waitedMs / 60_000));
+      log(
+        `Chu kỳ nâng cấp vượt ${Math.round(limitMs / 60_000)} phút (đã chờ ` +
+          `${waitedMinutes} phút) mà chưa thấy terminal; ` +
+          "không dừng agent, chuyển sang tự recovery."
       );
+      return {
+        status: "upgrade-timeout",
+        reason: "timeout",
+        waitedMs,
+        waitedMinutes
+      };
     }
     if (reader.takeCommand("stopagent")) return { status: "stop-requested" };
     const { outcome: freshOutcome, fresh } = getUpgradeRunOutcome(
@@ -464,7 +477,7 @@ async function runUpgradeOnce({
     progress: parseUpgradeProgress(body).length,
     text: body
   };
-  await withTimeout(pressUpgradeStart(frame), 2 * 60_000, "bấm bắt đầu nâng cấp");
+  await withTimeout(pressUpgradeStart(frame, phoiCount), 2 * 60_000, "bấm bắt đầu nâng cấp");
   await withTimeout(dismissGoodLuckPopup(page), 30_000, "đóng popup chúc may mắn").catch(() => false);
   // Từ đây chỉ chờ ack/kết quả trong chat; waitForUpgradeCompletion tự lấy
   // khóa trong các lần kiểm tra mini-app.

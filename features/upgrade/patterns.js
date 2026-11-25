@@ -10,6 +10,8 @@ const {
 } = require("../../lib/text-utils");
 const { countBotSystemErrors } = require("../../lib/bot-signals");
 const { parseOvrSpec } = require("../../lib/ovr-spec");
+const { parseMarketPrice } = require("../../lib/price-utils");
+const { hasFreshSignal } = require("../../lib/text-utils");
 
 // ---- Bot message patterns (nâng cấp; nbsp-safe như auto-buy) ----
 const SP = "[ \\u00a0]";
@@ -80,6 +82,16 @@ function isIconSeasonBadge(src) {
   const match = value.match(UG_GARENA_SEASON_ICON_RE);
   return !!match && UG_ICON_SEASON_IDS.has(match[1]);
 }
+
+// Nguồn duy nhất để nhận diện thẻ ICON ở CẢ HAI nơi: danh sách target (kho)
+// và danh sách phôi đã chọn. Mini-app có khi chỉ đưa badge qua img src, có khi
+// chỉ ghi chữ "ICON" trong .season-text; dùng chung helper này để không bao giờ
+// xảy ra "kho báo eligible nhưng guard chặn phôi" (hoặc ngược lại).
+function isIconCard(card) {
+  const srcs = Array.isArray(card?.imgSrcs) ? card.imgSrcs : [];
+  if (srcs.some((src) => isIconSeasonBadge(src))) return true;
+  return /icon/i.test(String(card?.seasonText || ""));
+}
 const MINI_APP_LOAD_RETRIES = 1;
 const NC_MENU_WAIT_MS = 30_000;
 const UG_START_ACK_MS = 40 * 60_000;
@@ -118,21 +130,7 @@ function shouldProtectBp(targetGrade, fromGrade) {
   return targetGrade >= fromGrade;
 }
 
-// "54.3M"->54300000, "2B"->2e9, "625,000"->625000, "50000000"->50000000.
-function parseMarketPrice(raw) {
-  const s = String(raw).trim();
-  const m = s.match(/^([\d.,]+)\s*([KMB])?$/i);
-  if (!m) throw new Error(`Không đọc được giá thị trường: ${raw}`);
-  const mult = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] || "").toUpperCase()] || 1;
-  const num = m[2]
-    ? Number(m[1].replace(/,/g, ""))
-    : Number(m[1].replace(/[.,\s]/g, ""));
-  const amount = Math.round(num * mult);
-  if (!Number.isSafeInteger(amount) || amount < 0) {
-    throw new Error(`Không đọc được giá thị trường: ${raw}`);
-  }
-  return amount;
-}
+// parseMarketPrice giờ nằm ở lib/price-utils; re-export để giữ API của module.
 
 function countUpgradeStarts(text) {
   return countMatches(text, UG_STARTED_RE);
@@ -187,7 +185,12 @@ function terminalInSegment(segment) {
   if (lastSummary) {
     const tail = segment.slice(lastSummary.index);
     const finalGrades = [...tail.matchAll(UG_FINAL_GRADE_RE)].map((m) => Number(m[1]));
-    const progress = parseUpgradeProgress(tail).at(-1);
+    // Bot gửi dòng "Số lượng nguyên liệu còn: N" NGAY SAU mỗi lần nâng thành
+    // công, tức là TRƯỚC dòng tổng kết "Nâng ... X/Y target". Chỉ đọc progress
+    // trong `tail` (sau summary) sẽ luôn ra null, khiến consumedCount luôn 0
+    // (log 21/11: "tiêu thụ lũy kế 0 phôi" dù đã đốt 76-87 phôi). Đọc trên cả
+    // segment của run hiện tại để lấy lần cập nhật phôi mới nhất.
+    const progress = parseUpgradeProgress(segment).at(-1);
     const reasonMatch = [...tail.matchAll(UG_STOP_REASON_RE)].at(-1) || null;
     const shortageMatches = [...tail.matchAll(UG_SHORTAGE_RE)];
     const shortage = shortageMatches.at(-1) || null;
@@ -436,7 +439,7 @@ function parseUpgradeTargetCards(cards, targetGrade) {
     const gradeMatch = card.text.match(/\+(\d+)/);
     if (!idMatch || !gradeMatch || seen.has(idMatch[1])) continue;
     seen.add(idMatch[1]);
-    const isIcon = (card.imgSrcs || []).some(isIconSeasonBadge);
+    const isIcon = isIconCard(card);
     const locked = /KHÓA/.test(card.text) || !!card.disabled;
     const grade = Number(gradeMatch[1]);
     if (!isIcon || locked || grade >= targetGrade) continue;
@@ -482,7 +485,7 @@ function summarizeUpgradeTargetCards(cards, targetGrade) {
       continue;
     }
     seen.add(idMatch[1]);
-    const isIcon = (card.imgSrcs || []).some(isIconSeasonBadge);
+    const isIcon = isIconCard(card);
     const locked = /KHÓA/.test(card.text) || !!card.disabled;
     if (!isIcon) summary.notIcon += 1;
     else if (locked) summary.locked += 1;
@@ -499,7 +502,7 @@ function countInventoryIcons(cards) {
     const idMatch = card.text.match(/_id:\s*([0-9a-f]+)/i);
     if (!idMatch) continue;
     const id = idMatch[1].toLowerCase();
-    if (seen.has(id) || !(card.imgSrcs || []).some(isIconSeasonBadge)) continue;
+    if (seen.has(id) || !isIconCard(card)) continue;
     seen.add(id);
     count += 1;
   }
@@ -589,8 +592,7 @@ function hasRecentUpgradeMenu(text) {
 }
 
 function hasFreshUpgradeMenu(baselineText, currentText) {
-  const fresh = getFreshSince(baselineText || "", currentText || "");
-  return Boolean(fresh && hasRecentUpgradeMenu(fresh));
+  return hasFreshSignal(baselineText || "", currentText || "", hasRecentUpgradeMenu);
 }
 
 module.exports = {
@@ -608,6 +610,7 @@ module.exports = {
   UG_ICON_SEASON_IDS,
   UG_GARENA_SEASON_ICON_RE,
   isIconSeasonBadge,
+  isIconCard,
   MINI_APP_LOAD_RETRIES,
   NC_MENU_WAIT_MS,
   UG_START_ACK_MS,

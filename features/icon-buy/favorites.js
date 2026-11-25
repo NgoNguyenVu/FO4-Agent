@@ -2,7 +2,7 @@
 // Kết quả bot trả về là text trong chat (có thể chia nhiều tin), không phải
 // mini-app. Chỉ đọc, không mua.
 const { chatTextReaders, waitForChatChange } = require("../../lib/chat-runtime");
-const { getFreshSince } = require("../../lib/text-utils");
+const { getFreshSince, shorten } = require("../../lib/text-utils");
 const { config } = require("../config");
 const { log } = require("../agent-log");
 const { ensureFeatureButton, clickFeatureButton } = require("./menu");
@@ -22,10 +22,6 @@ const STALE_TOKEN_RE = /E002|Token không hợp lệ|token không hợp lệ/i;
 // số cầu thủ ICON đọc được không còn tăng, thay vì chờ toàn bộ chat im lặng
 // (Auto Mua đang chạy có thể ghi log liên tục và làm chậm mỗi lượt 60 giây).
 const QUIET_MS = 4_000;
-
-function shorten(text, max = 500) {
-  return String(text || "").replace(/\s+/g, " ").trim().slice(0, max);
-}
 
 async function waitForLookupResult(
   page,

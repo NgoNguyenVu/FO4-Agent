@@ -9,10 +9,10 @@ Agent Playwright dieu khien Telegram Web cho mot chu trinh duy nhat:
    sau moi chu ky mua phoi; chi kiem tra lai sau khi phase nang ket thuc.
 4. Lap lai cho toi khi dung agent.
 
-Khi nang cap, agent van loc phoi theo OVR/gia cau hinh va bam "Kiểm tra & bắt
-đầu", nhung khong doi chieu lai text cua man hinh xac nhan cuoi. Mini-app co
-the tu danh dau hoac khoa cac the sau khi loc, lam so phoi hien thi thay doi;
-agent chi dung neu khong tim thay nut kiem tra hoac nut bat dau.
+Khi nang cap, agent loc phoi theo OVR/gia cau hinh, bam "Kiểm tra & bắt đầu" roi
+**doi chieu lai UI cuoi** voi config (target, ti le, so phoi, bao ve BP). UI sai
+thi KHONG bam start va se backoff/de co an toan; nut start thieu cung duoc tach
+rieng khoi truong hop "het phoi that".
 
 ## Chay
 
@@ -34,7 +34,9 @@ Lenh dieu khien trong chat bot:
 Thoi gian cho mua ICON la khong gioi han (`purchaseTimeoutSeconds: 0`) vi don co
 the mat 2-3 gio. Khi doc TTCN, agent chi hủy don moi co vi tri mua lon hon 3;
 neu khong doc duoc vi tri thi giu don de tranh huy nham. Cac gioi han gia, OVR,
-cap nang va thoi gian cho duoc dat trong [config.json](./config.json).
+cap nang va thoi gian cho duoc dat trong [config.json](./config.json). De bat dau
+tu dau, copy `config.example.json` -> `config.json` roi chinh cac gia tri OVR/gia
+cho tai khoan cua ban (agent khong tu y mở rộng dải phôi).
 
 ## Van hanh & shutdown
 
@@ -56,7 +58,8 @@ handler khac. Cleanup chi chay mot lan du nhan nhieu signal.
 Tat ca nam trong `%LOCALAPPDATA%\FO4PurchaseAgent\state\`:
 
 - `heartbeat.json`: `pid`, `lastHeartbeatAt`, `state`, `mode`, `activeWorkerId`.
-  Ghi atomic (`.tmp` + rename) moi 30 giay.
+  Ghi atomic (temp + fsync + rename); bo qua cac nhip ma noi dung khong doi, toi
+  da 5 phut/lan.
 - `workers.json`: worker registry `starting|running|stopping|stopped|unknown`.
 - `agent.lock`: process lock (lease 60 giay, heartbeat 20 giay).
 

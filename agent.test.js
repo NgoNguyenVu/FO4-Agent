@@ -51,8 +51,11 @@ const {
 } = require("./lib/bot-signals");
 const {
   ICON_E006_ATTRIBUTION_MS,
+  ICON_STOP_ATTRIBUTION_MS,
   markIconActivity,
   isRecentIconActivity,
+  markIconStopCommand,
+  isRecentIconStopCommand,
   resetIconActivity
 } = require("./lib/icon-activity");
 const {
@@ -60,8 +63,10 @@ const {
   createChatTextTracker,
   waitForChatChange,
   waitForTextToSettle,
-  reattachChatObserver
+  reattachChatObserver,
+  observeChatText
 } = require("./lib/chat-runtime");
+const { SEEN_MESSAGE_LIMIT } = require("./lib/chat-observer");
 const { waitForMenuReply } = require("./features/buy/menu");
 const {
   countMatches,
@@ -100,7 +105,9 @@ const {
   decideMasterUpgradePhase,
   decideInventoryAction,
   pivotMasterToUpgrade,
-  settleUpgradeOutcome
+  settleUpgradeOutcome,
+  upgradeFailureBackoffMs,
+  MAX_CONSECUTIVE_UPGRADE_FAILURES
 } = require("./features/upgrade");
 const { config, validateConfig } = require("./features/config");
 const { waitForPurchaseResults } = require("./features/icon-buy/order");
@@ -133,8 +140,60 @@ test("menu waits are short and validated separately from long bot waits", () => 
   assert.equal(config.iconBuy.purchaseTimeoutSeconds, 0);
 });
 
-test("menu and blank-frame recoveries are bounded and spaced out", () => {
-  // /tn quá sát nhau dễ bị bot rate-limit; iframe trắng phải được nhận ra
+test("upgrade.ovrPhoi chỉ kiểm tra cú pháp, không áp đặt dải phôi", () => {
+  // Người dùng tự chọn phôi trong config. Dải hẹp hay lệch ovrMin..ovrMax
+  // đều hợp lệ miễn đúng cú pháp; không có cảnh báo/áp đặt dải mặc định.
+  assert.doesNotThrow(validateConfig);
+  assert.equal(typeof config.upgrade.ovrPhoi, "string");
+  assert.ok(config.upgrade.ovrPhoi.trim().length > 0);
+});
+
+test("selected phôi count ignores the selected target card", () => {
+  // Thẻ target đang chọn có class "selected"; nếu quét toàn bộ button thì bộ
+  // lọc rỗng bị đếm thành 1 phôi và đi tiếp tới bước bấm bắt đầu.
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(
+    path.join(__dirname, "features/upgrade/mini-app.js"),
+    "utf8"
+  );
+  assert.match(src, /body\.querySelector\("#materialsList"\)/);
+  assert.doesNotMatch(src, /querySelectorAll\("#materialsList button, button"\)/);
+});
+
+test("ICON cards are never accepted as upgrade material", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(
+    path.join(__dirname, "features/upgrade/mini-app.js"),
+    "utf8"
+  );
+  assert.match(src, /const iconCards = selected\.filter\(isIconCard\)/);
+  // Nhận diện ICON dùng chung helper ở patterns.js cho cả target lẫn phôi.
+  const patternsSrc = fs.readFileSync(
+    path.join(__dirname, "features/upgrade/patterns.js"),
+    "utf8"
+  );
+  assert.match(patternsSrc, /function isIconCard\(card\)/);
+  assert.match(patternsSrc, /seasonText/);
+  assert.match(src, /iconCount > 0/);
+  assert.match(src, /cầu thủ ICON làm phôi/);
+});
+
+test("offender OVR check uses the scoped materials list and logs the distribution", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(
+    path.join(__dirname, "features/upgrade/mini-app.js"),
+    "utf8"
+  );
+  assert.match(src, /const selectedOvrs = selectedState\.ovrs/);
+  assert.doesNotMatch(src, /parseSelectedPhoiOvrs\(cardTexts\)/);
+  assert.match(src, /formatOvrDistribution\(selectedOvrs\)/);
+  assert.match(src, /base OVR \+ grade, chưa cộng OVR boost/);
+});
+
+test("menu and blank-frame recoveries are bounded and spaced out", () => {  // /tn quá sát nhau dễ bị bot rate-limit; iframe trắng phải được nhận ra
   // trước khi chờ hết timeout dài.
   assert.ok(TN_COMMAND_COOLDOWN_MS >= 10_000);
   assert.equal(MINI_APP_BLANK_TIMEOUT_MS, 15_000);
@@ -1367,6 +1426,31 @@ test("E006 caused by the ICON flow does not end the buy cycle", () => {
   assert.equal(countBotSystemErrors(stripBotSystemErrors(freshCompletion)), 0);
 });
 
+test("ICON /stop attribution suppresses worker-gone detection briefly", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  resetIconActivity();
+  assert.equal(isRecentIconStopCommand(), false);
+  markIconStopCommand(10_000);
+  assert.equal(isRecentIconStopCommand(ICON_STOP_ATTRIBUTION_MS, 20_000), true);
+  assert.equal(
+    isRecentIconStopCommand(ICON_STOP_ATTRIBUTION_MS, 20_000 + ICON_STOP_ATTRIBUTION_MS + 1),
+    false
+  );
+
+  const cycleSrc = fs.readFileSync(
+    path.join(__dirname, "features/buy/cycle.js"),
+    "utf8"
+  );
+  assert.match(cycleSrc, /!isRecentIconStopCommand\(\)/);
+  const tasksSrc = fs.readFileSync(
+    path.join(__dirname, "features/icon-buy/tasks.js"),
+    "utf8"
+  );
+  assert.match(tasksSrc, /markIconStopCommand\(\)/);
+  resetIconActivity();
+});
+
 test("ICON E006 attribution only covers the recent activity window", () => {
   resetIconActivity();
   assert.equal(isRecentIconActivity(undefined, Date.now()), false);
@@ -1811,7 +1895,9 @@ test("controller runs the unified ICON-to-upgrade flow", () => {
   assert.doesNotMatch(src, /createIconSession|startIconSession|iconSession/);
   assert.doesNotMatch(src, /mode\s*===\s*"icon"/);
   assert.doesNotMatch(src, /mode\s*=\s*"icon"/);
-  assert.match(src, /runSingleUpgrade\(page, rl, upgradeBlockedTargetIds, ui\)/);
+  assert.match(src, /pivotMasterToUpgrade\(/);
+  assert.doesNotMatch(src, /mode\s*===\s*"nang"/);
+  assert.doesNotMatch(src, /upgradeBlockedTargetIds/);
 });
 
 test("buy start ACK timeout re-verifies /stop before clicking again", () => {
@@ -1824,7 +1910,7 @@ test("buy start ACK timeout re-verifies /stop before clicking again", () => {
   assert.match(cycleSrc, /BUY_START_ACK_TIMEOUT_MS/);
   assert.match(cycleSrc, /error\.code = "START_ACK_TIMEOUT"/);
   assert.match(cycleSrc, /error\.code = "START_ACK_UNVERIFIED"/);
-  assert.match(cycleSrc, /checkAutoBuyRunning\(page, rl\)/);
+  assert.match(cycleSrc, /checkAutoBuyRunning\(page, rl, \{ ui \}\)/);
 
   const controllerSrc = fs.readFileSync(
     path.join(__dirname, "features/controller.js"),
@@ -1910,7 +1996,7 @@ test("upgrade run detector is reachable at module scope", () => {
   const path = require("node:path");
   const read = (file) => fs.readFileSync(path.join(__dirname, file), "utf8");
   const upgradeSrc = read("features/upgrade/loop.js");
-  assert.ok(/^async function pivotMasterToUpgrade\(page, rl, runUpgrade = runSingleUpgrade, logFn = log, ui = null\)/m.test(upgradeSrc));
+  assert.ok(/^async function pivotMasterToUpgrade\([\s\S]*?failureState = \{ consecutive: 0 \}\s*\)/m.test(upgradeSrc));
   assert.ok(/^async function runSingleUpgrade\(page, rl, blockedTargetIds = new Set\(\), ui = null\)/m.test(upgradeSrc));
   const buyOutcomeSrc = read("features/buy/outcome.js");
   assert.ok(/^async function settleBuyOutcome/m.test(buyOutcomeSrc));
@@ -1924,8 +2010,14 @@ test("master upgrade phase returns to buying when phôi or targets run out", () 
   // hết phôi / hết target khả thi -> quay lại kiểm tra kho
   assert.equal(decideMasterUpgradePhase("no-materials"), "buy");
   assert.equal(decideMasterUpgradePhase("no-targets"), "buy");
-  // không đổi kho -> dừng để tránh vòng lặp vô ích
-  assert.equal(decideMasterUpgradePhase("no-progress"), "idle");
+  // không đổi kho -> quay lại kiểm tra kho, KHÔNG đưa agent về idle
+  assert.equal(decideMasterUpgradePhase("no-progress"), "buy");
+  assert.equal(decideMasterUpgradePhase("upgrade-start-failed"), "buy");
+  assert.equal(decideMasterUpgradePhase("upgrade-ui-mismatch"), "buy");
+  assert.equal(decideMasterUpgradePhase("upgrade-timeout"), "buy");
+  assert.equal(decideMasterUpgradePhase("targets-exhausted"), "buy");
+  // chỉ stop-requested thật sự mới được idle
+  assert.equal(decideMasterUpgradePhase("idle"), "idle");
 });
 
 test("inventory with only +target ICONs waits for a new ICON instead of buying phôi", () => {
@@ -1969,14 +2061,81 @@ test("master upgrade phase keeps upgrading then returns to buying", async () => 
   assert.equal(result.agentActive, true);
 });
 
-test("master upgrade phase returns to buying when phôi runs out", async () => {
+test("master upgrade phase returns to buying when phôi runs out after a real run", async () => {
   const result = await pivotMasterToUpgrade(
     null,
     null,
-    async () => ({ action: "no-materials" }),
+    async () => ({ action: "no-materials", consumed: true }),
     () => {}
   );
   assert.equal(result.agentActive, true);
+});
+
+test("master upgrade phase keeps buying while ICONs remain even if phôi do not match the OVR spec", async () => {
+  // Kho còn phôi nhưng dải OVR config không khớp: vẫn phải quay lại mua,
+  // controller mới là nơi dừng khi hết ICON. Log kèm OVR thật để sửa config.
+  const logs = [];
+  const result = await pivotMasterToUpgrade(
+    null,
+    null,
+    async () => ({ action: "no-materials", consumed: false, availableCount: 40 }),
+    (message) => logs.push(message)
+  );
+  assert.equal(result.agentActive, true);
+  assert.ok(logs.some((line) => /không dừng luồng, quay lại Auto Mua/.test(line)));
+  assert.ok(logs.some((line) => /upgrade\.ovrPhoi/.test(line)));
+});
+
+test("empty filter with stock phôi logs the real OVR distribution for diagnosis", async () => {
+  const logs = [];
+  await pivotMasterToUpgrade(
+    null,
+    null,
+    async () => ({
+      action: "no-materials",
+      consumed: false,
+      availableCount: 15,
+      availableOvrs: [112, 113, 113, 114, 114, 120]
+    }),
+    (message) => logs.push(message)
+  );
+  assert.ok(logs.some((line) => /112:1, 113:2, 114:2, 120:1/.test(line)));
+});
+
+test("master upgrade phase returns to buying when the mini-app reports zero phôi", async () => {
+  const logs = [];
+  const result = await pivotMasterToUpgrade(
+    null,
+    null,
+    async () => ({ action: "no-materials", consumed: false, availableCount: 0 }),
+    (message) => logs.push(message)
+  );
+  assert.equal(result.agentActive, true);
+  assert.ok(logs.some((line) => /hết phôi.*Quay lại Auto Mua/i.test(line)));
+});
+
+test("master upgrade phase returns to buying when phôi were consumed earlier in the phase", async () => {
+  const steps = [
+    { action: "blocked-target", outcome: { success: 0 }, consumedCount: 20 },
+    { action: "no-materials", consumed: false, availableCount: null }
+  ];
+  const logs = [];
+  const result = await pivotMasterToUpgrade(
+    null,
+    null,
+    async () => steps.shift(),
+    (message) => logs.push(message)
+  );
+  assert.equal(result.agentActive, true);
+  assert.ok(logs.some((line) => /đã tiêu thụ 20 phôi/.test(line)));
+});
+
+test("phôi consumption alone justifies continuing to the next target", () => {
+  assert.equal(
+    shouldResumeBuyAfterUpgrade({ success: 0, finalGrade: 2 }, 3, 12),
+    true
+  );
+  assert.equal(shouldResumeBuyAfterUpgrade({ success: 0, finalGrade: 2 }, 3, 0), false);
 });
 
 test("target exhaustion while waiting returns to idle", async () => {
@@ -1990,7 +2149,7 @@ test("target exhaustion while waiting returns to idle", async () => {
   assert.equal(result.action, "targets-exhausted");
 });
 
-test("master upgrade phase stops when the target made no progress", async () => {
+test("master upgrade phase rechecks inventory when the target made no progress", async () => {
   const result = await pivotMasterToUpgrade(
     null,
     null,
@@ -2001,17 +2160,85 @@ test("master upgrade phase stops when the target made no progress", async () => 
     }),
     () => {}
   );
-  assert.equal(result.agentActive, false);
+  assert.equal(result.agentActive, true);
+  assert.equal(result.retryInventoryCheck, true);
 });
 
-test("master upgrade phase stops when the open mini-app has no targets left", async () => {
+test("master upgrade phase rechecks inventory when the open mini-app has no targets left", async () => {
   const result = await pivotMasterToUpgrade(
     null,
     null,
     async () => ({ action: "targets-exhausted" }),
     () => {}
   );
-  assert.equal(result.agentActive, false);
+  assert.equal(result.agentActive, true);
+  assert.equal(result.retryInventoryCheck, true);
+});
+
+test("repeated start/UI failures pause buying with escalating backoff instead of stopping the agent", async () => {
+  assert.equal(MAX_CONSECUTIVE_UPGRADE_FAILURES, 3);
+  assert.equal(upgradeFailureBackoffMs(1), 60_000);
+  assert.equal(upgradeFailureBackoffMs(2), 120_000);
+  assert.equal(upgradeFailureBackoffMs(3), 240_000);
+  assert.equal(upgradeFailureBackoffMs(100), 15 * 60_000);
+
+  const failureState = { consecutive: 0 };
+  const reasons = [
+    "UPGRADE_START_BUTTON_MISSING",
+    "UPGRADE_UI_MISMATCH",
+    "UPGRADE_START_BUTTON_MISSING"
+  ];
+  let result = null;
+  // Mỗi lần pivot tương ứng với một chu kỳ mua phôi rồi nâng lại.
+  for (const reason of reasons) {
+    result = await pivotMasterToUpgrade(
+      null,
+      null,
+      async () => ({ action: "upgrade-start-failed", reason }),
+      () => {},
+      null,
+      failureState
+    );
+  }
+  assert.equal(result.agentActive, true);
+  assert.equal(result.pauseBuy, true);
+  assert.equal(result.failureCount, 3);
+  assert.equal(result.backoffMs, 240_000);
+  assert.equal(failureState.consecutive, 3);
+});
+
+test("real phôi consumption resets the consecutive upgrade failure counter", async () => {
+  const failureState = { consecutive: 0 };
+  const runPivot = (up) =>
+    pivotMasterToUpgrade(null, null, async () => up, () => {}, null, failureState);
+  const first = await runPivot({ action: "upgrade-start-failed" });
+  assert.equal(failureState.consecutive, 1);
+  assert.equal(first.agentActive, true);
+
+  // Một lượt nâng thật tiêu thụ phôi phải xóa sạch số lần thất bại trước đó.
+  const successThenOut = [
+    {
+      action: "continue",
+      consumedCount: 5,
+      outcome: { success: 0 },
+      target: { grade: 4 }
+    },
+    { action: "no-materials", consumed: true }
+  ];
+  await pivotMasterToUpgrade(
+    null,
+    null,
+    async () => successThenOut.shift(),
+    () => {},
+    null,
+    failureState
+  );
+  assert.equal(failureState.consecutive, 0);
+
+  const result = await runPivot({ action: "upgrade-ui-mismatch" });
+  assert.equal(result.agentActive, true);
+  assert.equal(result.pauseBuy, undefined);
+  assert.equal(failureState.consecutive, 1);
 });
 
 test("master upgrade phase switches mode when a start command arrives", async () => {
@@ -2347,6 +2574,19 @@ test("controller keeps retrying an unconfirmed inventory receipt instead of idli
   );
 });
 
+test("buy outcome keeps the agent alive on purchase-stopped while master may still have ICONs", async () => {
+  const result = await settleBuyOutcome(null, null, { status: "purchase-stopped" }, {
+    pivotToUpgrade: true
+  });
+  assert.equal(result.agentActive, true);
+  assert.equal(result.retryInventoryCheck, true);
+  assert.equal(result.inventoryCheckDelayMs, BUY_TIMEOUT_RECOVERY_COOLDOWN_MS);
+  assert.equal(result.openNext, false);
+
+  const nonMaster = await settleBuyOutcome(null, null, { status: "purchase-stopped" });
+  assert.equal(nonMaster.agentActive, false);
+});
+
 test("buy outcome recovers a cycle timeout instead of stopping the agent", async () => {
   // Quá maxCycleWaitMinutes: đóng mini-app, xác minh /stop, dừng worker nếu còn
   // chạy, rồi giữ agent sống để kiểm tra lại kho sau cooldown ngắn.
@@ -2429,6 +2669,53 @@ test("controller keeps the agent alive and rechecks inventory after a buy cycle 
     controllerSrc,
     /outcome\.status === "cycle-timeout" \? "cycle-timeout" : "completed"/
   );
+});
+
+test("controller clears pendingBuyCompletion on every non-completed buy outcome", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  assert.match(controllerSrc, /pendingBuyCompletion = record \|\| null/);
+  assert.doesNotMatch(controllerSrc, /if \(record\) pendingBuyCompletion = record/);
+  const handleAt = controllerSrc.indexOf("const handleBuyOutcome");
+  const inventoryAt = controllerSrc.indexOf("const checkMasterInventory");
+  assert.ok(handleAt > 0 && inventoryAt > handleAt);
+  const handleBlock = controllerSrc.slice(handleAt, inventoryAt);
+  for (const marker of [
+    "pendingBuyCompletion = null",
+    "next.retryInventoryCheck",
+    "next.retryInventoryReceipt",
+    "next.pivotToUpgrade",
+    "outcome?.status === \"system-error\""
+  ]) {
+    assert.ok(handleBlock.includes(marker), `buy outcome handler must cover ${marker}`);
+  }
+  const pivotAt = controllerSrc.indexOf("const runUpgradePivot");
+  assert.ok(pivotAt > 0);
+  const pivotBlock = controllerSrc.slice(pivotAt, pivotAt + 400);
+  assert.match(pivotBlock, /pendingBuyCompletion = null/);
+});
+
+test("controller pauses buying after repeated upgrade failures without going idle", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  assert.match(controllerSrc, /upgradeFailureState/);
+  assert.match(controllerSrc, /pivot\.pauseBuy/);
+  assert.match(controllerSrc, /pauseBackoffMs/);
+  assert.match(controllerSrc, /upgradeFailureBackoffMs/);
+  assert.match(controllerSrc, /pivot\.retryInventoryCheck/);
+  // Không có nhánh nào gán agentActive=false khi pivot báo pauseBuy.
+  const pauseIdx = controllerSrc.indexOf("if (pivot.pauseBuy)");
+  assert.ok(pauseIdx > 0);
+  const pauseBlock = controllerSrc.slice(pauseIdx, pauseIdx + 900);
+  assert.doesNotMatch(pauseBlock, /agentActive = false/);
 });
 
 test("zero upgradeable ICONs pauses buy/upgrade without stopping the agent", () => {
@@ -2687,6 +2974,171 @@ test("reattach keeps the same chat tracker after a Telegram reload", async () =>
   assert.equal(await reattachChatObserver(page), true);
   assert.equal(chatTextReaders.get(page), tracker);
   assert.match(tracker.snapshot().text, /vị trí: 2/);
+});
+
+test("observe() is idempotent: one binding and one MutationObserver per page", async () => {
+  const created = [];
+  let disconnected = 0;
+  class FakeMutationObserver {
+    constructor(callback) { this.callback = callback; created.push(this); }
+    observe() {}
+    disconnect() { disconnected += 1; }
+  }
+  const fakeWindow = {};
+  const fakeDocument = {
+    documentElement: {},
+    body: { innerText: "chat hiện tại" },
+    querySelectorAll: () => []
+  };
+  const page = {
+    exposeFunction: async (name, callback) => { fakeWindow[name] = callback; },
+    locator: () => ({ innerText: async () => "chat hiện tại" }),
+    evaluate: async (fn, args) => {
+      const originalSetTimeout = global.setTimeout;
+      const originalClearTimeout = global.clearTimeout;
+      global.window = fakeWindow;
+      global.document = fakeDocument;
+      global.MutationObserver = FakeMutationObserver;
+      // Notify chạy ngay để không để lại timer tham chiếu tới global đã xóa.
+      global.setTimeout = (callback) => {
+        callback();
+        return { unref() {} };
+      };
+      global.clearTimeout = () => {};
+      try { return fn(args); } finally {
+        delete global.window;
+        delete global.document;
+        delete global.MutationObserver;
+        global.setTimeout = originalSetTimeout;
+        global.clearTimeout = originalClearTimeout;
+      }
+    }
+  };
+  try {
+    const first = await observeChatText(page, () => {});
+    const second = await observeChatText(page, () => {});
+    assert.equal(second, first, "phải giữ cùng tracker qua recovery");
+    assert.equal(created.length, 1, "không được tạo observer thứ hai");
+    assert.equal(disconnected, 0, "observer đang active thì không cắt/create lại");
+    assert.equal(await reattachChatObserver(page), true);
+    assert.equal(created.length, 1, "reattach lặp lại vẫn chỉ có 1 observer");
+  } finally {
+    if (fakeWindow.__fo4ChatObserver) fakeWindow.__fo4ChatObserver.disconnect();
+  }
+});
+
+test("auxiliary cleanup: temp state, README example, shortened log paths", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const persistenceTest = fs.readFileSync(
+    path.join(__dirname, "lib/e006-cooldown.persistence.test.js"),
+    "utf8"
+  );
+  assert.match(persistenceTest, /os\.tmpdir\(\)/);
+  assert.match(persistenceTest, /t\.after\(\(\) => fs\.rmSync/);
+  const readme = fs.readFileSync(path.join(__dirname, "README.md"), "utf8");
+  assert.match(readme, /config\.example\.json/);
+  const cli = fs.readFileSync(
+    path.join(__dirname, "scripts/compare-telegram-log.js"),
+    "utf8"
+  );
+  assert.match(cli, /displayLogPath/);
+  assert.match(cli, /%LOCALAPPDATA%/);
+  assert.equal(
+    fs.existsSync(
+      path.join(process.env.LOCALAPPDATA || "", "FO4PurchaseAgent", "state", "e006-cooldown.test.json")
+    ),
+    false
+  );
+});
+
+test("dead shims and unused exports are removed", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  assert.equal(fs.existsSync(path.join(__dirname, "features/control-commands.js")), false);
+  assert.equal(fs.existsSync(path.join(__dirname, "lib/spend-guard.js")), false);
+  const controller = fs.readFileSync(path.join(__dirname, "features/controller.js"), "utf8");
+  assert.doesNotMatch(controller, /runAgentCli|runAutoBuy/);
+  const lifecycle = fs.readFileSync(path.join(__dirname, "lib/lifecycle.js"), "utf8");
+  assert.doesNotMatch(lifecycle, /resetSharedLifecycleForTests/);
+  const buyIndex = fs.readFileSync(path.join(__dirname, "features/buy/index.js"), "utf8");
+  assert.doesNotMatch(buyIndex, /buyMenu/);
+});
+
+test("/resetagent is handled before E006 classification and wakes every prompt", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  const catchAt = controllerSrc.indexOf("} catch (error) {", controllerSrc.indexOf("while (true)"));
+  assert.ok(catchAt > 0);
+  const resetAt = controllerSrc.indexOf("if (remoteResetRequested)", catchAt);
+  const e006At = controllerSrc.indexOf("if (isE006Error(error))", catchAt);
+  assert.ok(resetAt > 0 && e006At > resetAt, "reset phải đứng trước E006");
+  assert.match(controllerSrc, /wakeAllPendingPrompts\(\)/);
+  assert.doesNotMatch(controllerSrc, /if \(isWaitingForPrompt\(\)\) wakePendingPrompt\(\)/);
+});
+
+test("UI lock covers only /stop send, not the 5-minute bot reply wait", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const cycleSrc = fs.readFileSync(
+    path.join(__dirname, "features/buy/cycle.js"),
+    "utf8"
+  );
+  const start = cycleSrc.indexOf("async function checkAutoBuyRunning");
+  const end = cycleSrc.indexOf("// Chỉ tin vào menu /stop", start);
+  assert.ok(start > 0 && end > start);
+  const fn = cycleSrc.slice(start, end);
+  assert.match(fn, /withUi\(async \(\) => \{[\s\S]*?sendBotCommand\(page, composer, "\/stop"\)/);
+  const lockStart = fn.indexOf("await withUi(async () => {");
+  const lockEnd = fn.indexOf("});", lockStart);
+  const waitAt = fn.indexOf("waitForChatChange");
+  assert.ok(lockStart > 0 && lockEnd > lockStart, "phải có khóa UI quanh lúc gửi /stop");
+  assert.ok(waitAt > lockEnd, "waitForChatChange phải nằm NGOÀI khóa UI");
+  const controllerSrc = fs.readFileSync(
+    path.join(__dirname, "features/controller.js"),
+    "utf8"
+  );
+  assert.match(controllerSrc, /checkAutoBuyRunning\(page, rl, \{ ui \}\)/);
+});
+
+test("24/7 hardening is wired: deadline helper, caught stop promises, signal recheck", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const read = (file) => fs.readFileSync(path.join(__dirname, file), "utf8");
+  const controller = read("features/controller.js");
+  const agent = read("agent.js");
+  const telegramIo = read("features/telegram-io.js");
+  const composer = read("features/composer.js");
+  const miniApp = read("features/buy/mini-app.js");
+  const registry = read("lib/worker-registry.js");
+  const lifecycle = read("lib/lifecycle.js");
+
+  assert.match(controller, /withDeadline\(/);
+  assert.doesNotMatch(controller, /Promise\.race\(\[[\s\S]{0,200}?setTimeout/);
+  assert.match(controller, /stopIconMonitor\("\/stopagent"\)\.catch\(/);
+  assert.match(controller, /stopIconMonitor\("\/resetagent"\)\.catch\(/);
+  assert.match(agent, /if \(lifecycle\.isStopping\(\)\) return;/);
+  assert.match(telegramIo, /withDeadline\(\s*currentContext\?\.close/);
+  assert.match(composer, /reattachAfterNavigation\(page\)/);
+  assert.match(miniApp, /path\.join\(dataDir, "debug"\)/);
+  assert.doesNotMatch(miniApp, /path\.join\(process\.cwd\(\), "debug"\)/);
+  assert.match(miniApp, /DEBUG_SHOT_LIMIT = 20/);
+  assert.match(registry, /writeJsonAtomicFile\(file, value, \{ fsImpl \}\)/);
+  assert.match(lifecycle, /writeFileAtomic\(heartbeatPath/);
+});
+
+test("seenMessageIds is bounded after a long-running chat", () => {
+  const tracker = createChatTextTracker("");
+  const total = SEEN_MESSAGE_LIMIT + 10;
+  // text rỗng để không ghi telegram-chat.log; vẫn đủ id để test bộ nhớ.
+  for (let i = 0; i < total; i += 1) {
+    tracker.publish("chat", [{ id: `mid-${i}`, text: "", out: false }]);
+  }
+  assert.equal(tracker.getSeenMessageCount(), SEEN_MESSAGE_LIMIT);
 });
 
 test("hard reload uses page.reload instead of same-hash goto and re-arms tracking", async () => {

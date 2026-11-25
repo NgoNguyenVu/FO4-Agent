@@ -333,6 +333,13 @@ test("resolveWorkers continues after a partial failure and reports it", () => {
   assert.deepEqual(calls.map((call) => call.workerId), ["a", "bad", "c"]);
 });
 
+test("resolve CLI uses the shared fsync atomic writer and validates state shape", () => {
+  const src = fs.readFileSync(path.join(__dirname, "resolve-worker.js"), "utf8");
+  assert.match(src, /require\("\.\.\/lib\/atomic-file"\)/);
+  assert.doesNotMatch(src, /function writeJsonAtomic\(file, value\) \{/);
+  assert.match(src, /Cấu trúc \$\{statePath\} không hợp lệ/);
+});
+
 test("restoreProcessBlock puts back or removes the previous process block", (t) => {
   const { restoreProcessBlock } = require("./resolve-worker");
   const dir = tempDir(t);

@@ -79,6 +79,7 @@ async function main() {
       if (attempt === MAX_STARTUP_RETRIES) break;
       console.log(`Restarting agent (lần ${attempt + 1}/${MAX_STARTUP_RETRIES}) sau 10 giây...`);
       await new Promise((resolve) => setTimeout(resolve, 10_000));
+      if (lifecycle.isStopping()) return;
     }
   }
   process.exitCode = 1;

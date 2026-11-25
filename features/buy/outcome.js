@@ -44,7 +44,8 @@ async function recoverTimedOutCycle(
   let running = null;
   let checkFailed = false;
   try {
-    const status = await withLock(() => checkRunning(page, rl));
+    // checkAutoBuyRunning tự giữ khóa UI chỉ lúc gửi /stop.
+    const status = await checkRunning(page, rl, { ui });
     running = Boolean(status?.running);
   } catch (error) {
     checkFailed = true;
@@ -155,6 +156,23 @@ async function settleBuyOutcome(
     }
     log("Đã nhận cầu thủ vào kho sau khi kho đầy; tiếp tục chu kỳ Auto Mua.");
     return { agentActive: true, openNext: true, pivotToUpgrade: false };
+  }
+  // Bot tự dừng Auto Mua Phôi: trong chế độ tổng KHÔNG được đưa agent về idle
+  // khi chưa biết kho còn ICON hay không. Quay lại kiểm tra kho (và chỉ mua
+  // tiếp nếu có ICON dưới target). Chế độ không tổng giữ hành vi cũ.
+  if (outcome.status === "purchase-stopped" && pivotToUpgrade) {
+    log(
+      "Bot đã dừng Auto Mua Phôi; KHÔNG về idle. Kiểm tra lại kho ICON sau " +
+        `${Math.round(BUY_TIMEOUT_RECOVERY_COOLDOWN_MS / 1_000)} giây ` +
+        "rồi mới quyết định mua phôi hay chờ ICON mới."
+    );
+    return {
+      agentActive: true,
+      openNext: false,
+      pivotToUpgrade: false,
+      retryInventoryCheck: true,
+      inventoryCheckDelayMs: BUY_TIMEOUT_RECOVERY_COOLDOWN_MS
+    };
   }
   const idleMessage = idleOutcomeMessage(outcome);
   if (idleMessage) {

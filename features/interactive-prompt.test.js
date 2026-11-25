@@ -9,6 +9,8 @@ const assert = require("node:assert/strict");
 const {
   promptWakeable,
   wakePendingPrompt,
+  wakeAllPendingPrompts,
+  pendingPromptCount,
   setWaitingForLoginPrompt,
   setWaitingForRecoveryPrompt,
   isWaitingForPrompt
@@ -40,6 +42,35 @@ test("wakePendingPrompt đánh thức prompt đang chờ bằng chuỗi rỗng",
 
   // Callback đến muộn sau khi đã wake không được làm treo/đổi kết quả.
   answer("late");
+});
+
+test("promptWakeable dùng hàng đợi: composer và controller không ghi đè nhau", async () => {
+  const callbacks = [];
+  const rl = { question: (message, callback) => { callbacks.push(callback); } };
+  assert.equal(pendingPromptCount(), 0);
+
+  const first = promptWakeable(rl, "đăng nhập?");
+  const second = promptWakeable(rl, "khôi phục?");
+  assert.equal(pendingPromptCount(), 2);
+
+  wakePendingPrompt();
+  assert.equal(await first, "");
+  assert.equal(pendingPromptCount(), 1);
+
+  callbacks[1]("   xong   ");
+  assert.equal(await second, "xong");
+  assert.equal(pendingPromptCount(), 0);
+});
+
+test("wakeAllPendingPrompts giải phóng cả prompt đăng nhập lẫn recovery", async () => {
+  const rl = { question: () => {} };
+  const login = promptWakeable(rl, "login?");
+  const recovery = promptWakeable(rl, "recovery?");
+  assert.equal(pendingPromptCount(), 2);
+  assert.equal(wakeAllPendingPrompts(), 2);
+  assert.equal(await login, "");
+  assert.equal(await recovery, "");
+  assert.equal(pendingPromptCount(), 0);
 });
 
 test("wakePendingPrompt không lỗi khi không có prompt nào chờ", () => {

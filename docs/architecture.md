@@ -148,14 +148,14 @@ Rules expressed in code and comments:
 | `lib/chat-scroll.js` | Scroll chat to bottom |
 | `scripts/check-secrets.js` | Secret scanner used by npm scripts |
 
-`features/control-commands.js` is a backward-compatible re-export of `lib/control-commands.js`.
+All control-command constants live in `lib/control-commands.js`; the former `features/control-commands.js` shim was removed (zero importers).
 
 ## 6. Control loop
 
 The controller is a single `while (true)` loop with explicit state held in local variables:
 
 - `agentActive` — idle vs active
-- `mode` — `null`, `"master"` (buy + upgrade pivot), or `"nang"` (upgrade-only branch)
+- `mode` — `null` (idle) or `"master"` (buy + upgrade pivot); the old `"nang"` upgrade-only mode was removed (no control command ever selected it)
 - `sessionUnavailable` — Telegram page must be reopened
 - `remoteResetRequested` — `/resetagent` received
 - `ui` — shared UI mutex
@@ -169,7 +169,8 @@ stateDiagram-v2
   Idle --> Idle: /stopagent (stop managed buy worker only)
   Idle --> Recovering: /resetagent
   Active --> Active: buy cycle / upgrade pivot / next cycle
-  Active --> Idle: terminal outcome, E006, no targets/materials
+  Active --> Active: terminal buy/upgrade outcome -> recheck ICON inventory
+  Active --> Idle: explicit /stopagent or stop-requested during a worker stop
   Active --> Recovering: recoverable error, navigation, browser close
   Recovering --> Startup: reopen Telegram session
   Startup --> Idle: restored
@@ -188,38 +189,30 @@ stateDiagram-v2
 Order of checks in one iteration:
 
 1. If `sessionUnavailable`, call `restoreTelegramSession()`: reopen page, re-observe chat, ensure composer, arm tracker, wait for settle.
-2. If `mode === "nang"`, run the upgrade-only branch.
-3. If a menu backoff is active, sleep up to 5 s and continue.
-4. Adopt/synchronize with an already-running buy worker:
+2. If a menu backoff is active, sleep up to 5 s and continue.
+3. Adopt/synchronize with an already-running buy worker:
    - Check `/stop` if a prior check is done or chat says auto-buy is running.
    - If running, wait for that cycle and settle its outcome; no new cycle is started.
-5. Verify a suspected orphan worker:
+4. Verify a suspected orphan worker:
    - If chat says running, scroll to tail and re-read (`verifyTailOrphan`).
    - If still running, gather 5 minutes of evidence (`confirmSuspectedWorker`); adopt or clear.
-6. Ensure the background ICON monitor is running (`runIconBuy`).
-7. If inventory availability is unknown, open the upgrade mini-app once and inspect ICON cards (`inspectInventoryIcons`).
+5. Ensure the background ICON monitor is running (`runIconBuy`).
+6. If inventory availability is unknown, open the upgrade mini-app once and inspect ICON cards (`inspectInventoryIcons`).
    - A new "Đã nhận … cầu thủ trong kho mua" receipt forces an immediate re-check.
    - At least one ICON below `upgrade.targetGrade` (`eligible > 0`): mark inventory usable and continue.
    - No ICON, or every ICON already at target / locked: wait `inventoryCheckIntervalSeconds` (default 1800 s); do not start a buy cycle.
-8. Acquire the UI lock and start a buy cycle:
+7. Acquire the UI lock and start a buy cycle:
    - `getTradeFrame()` → `configureCycle()` → verify "Bắt đầu Auto Mua" is enabled
    - capture start-ACK and cycle baselines
    - click "Bắt đầu Auto Mua"
-9. Wait for start acknowledgement, close the mini-app, wait for the cycle outcome.
-10. Guard against a stale completion: if `completed` arrives < 60 s after start, re-check `/stop`. If a worker is still running, discard the stale notice and wait again.
-11. Store the completion record, then `settleBuyOutcome()`.
-12. If it returns `pivotToUpgrade`, run `pivotMasterToUpgrade()`; otherwise continue or go idle.
+8. Wait for start acknowledgement, close the mini-app, wait for the cycle outcome.
+9. Guard against a stale completion: if `completed` arrives < 60 s after start, re-check `/stop`. If a worker is still running, discard the stale notice and wait again.
+10. Store the completion record (`pendingBuyCompletion` only for `completed`; every other outcome clears it), then `settleBuyOutcome()`.
+11. If it returns `pivotToUpgrade`, run `pivotMasterToUpgrade()`; otherwise continue or go idle.
 
-### Active state — `nang`
+### Upgrade-only mode (removed)
 
-This branch checks that auto-buy is not running, then calls `runSingleUpgrade(page, rl, blockedTargetIds, ui)` repeatedly:
-
-- `continue` / `blocked-target` → loop again
-- `no-targets` → log and go idle
-- `no-materials` → log and go idle
-- `no-progress` → log and go idle
-
-The only start command currently defined is `/startagent`, which maps to `mode: "master"` (`lib/control-commands.js`). The `"nang"` branch exists in the controller but no current control command selects it.
+There is no longer a `mode === "nang"` branch. The only control command defined is `/startagent` → `master`; upgrades always run through `pivotMasterToUpgrade()` after an `inventory-full` buy outcome. `lib/e006-cooldown.js` still accepts the legacy alias `"nang"` for flow attribution, but no controller mode uses it.
 
 ### Leaving active state
 
@@ -232,6 +225,7 @@ In the loop's `finally`:
 
 - **One controller loop** performs all buy/upgrade phase decisions.
 - **One background ICON promise** (`iconMonitor`) may run concurrently with buy/upgrade. It is started by `ensureIconMonitor()` and restarted on the next buy cycle if it ends without a stop request.
+- **Worker registry** (`lib/worker-registry.js`) is fail-closed: `unknown` blocks all new workers. `reconcileOnStartup()` accepts `ignoreFeatures` for workers that are legitimately running in the same process (ICON); `/startagent` and session-restore calls pass `ignoreFeatures: ["icon"]` so the in-process ICON worker is not turned into `unknown` just because chat has no auto-buy evidence. An `unknown` from an earlier process still requires `scripts/resolve-worker.js`.
 - **One UI mutex** (`lib/ui-lock.js`) serializes Telegram UI operations: menu clicks, mini-app work, `/tn`, `/stop`, `/stopauto`, `/stopnc`, composer writes.
   - Read-only waits (`waitForChatChange`, completion polling) release the lock.
   - `withLock` hands ownership directly to the next waiter on release.
@@ -273,7 +267,9 @@ In the loop's `finally`:
 | `TELEGRAM_CHAT_UNREADABLE` | ICON runner after 8 failed `/stop` reads | Reopen Telegram session |
 | `INVENTORY_READ_UNCONFIRMED` | Upgrade inventory read | Treated as transient; keep master loop alive and retry next interval |
 | `NO_UPGRADE_TARGETS` | Upgrade runner | Converted to `no-targets` action |
-| `NO_UPGRADE_MATERIALS` | Upgrade filter/start | Converted to `no-materials` action |
+| `NO_UPGRADE_MATERIALS` | Upgrade filter found no phôi | Converted to `no-materials` action |
+| `UPGRADE_START_BUTTON_MISSING` | Start button absent after final check | UI/render failure (`upgrade-start-failed`), not "out of phôi"; counted by the BP-waste guard |
+| `UPGRADE_UI_MISMATCH` | Final confirmation UI disagrees with config | Start is never clicked; action `upgrade-ui-mismatch`, counted by the BP-waste guard |
 | `TELEGRAM_LOGIN_REQUIRED` | Mini-app check | Propagates to recovery prompt |
 
 `MINI_APP_BP_LOAD_TIMEOUT` is produced by the buy frame wait after the bot response deadline; it is retried inside `getTradeFrame` up to `MINI_APP_BP_LOAD_RETRIES = 2`, then falls through to the generic recovery path.
@@ -306,7 +302,7 @@ Validation (`validateConfig`) enforces:
 - Positive integers for buy OVR/price/quantity/cycle/wait/menu values.
 - `ovrMin <= ovrMax`.
 - `quantityPerAttempt <= 5`.
-- Upgrade: non-negative integer spec fields; `targetGrade >= 1`; `minRatio <= 100`; `maxUpgradeWaitMinutes >= 1`; positive target-check delays; non-empty `ovrPhoi` and `maxPriceEach`.
+- Upgrade: non-negative integer spec fields; `2 <= targetGrade <= 13` (mini-app combobox range); `minRatio <= 100`; `maxUpgradeWaitMinutes >= 1`; positive target-check delays; non-empty `ovrPhoi` and `maxPriceEach`. `ovrPhoi` is normalized (spaces around `,` and `-` stripped) and syntax-checked only: the buy app filters by listing OVR (includes OVR boost) while the upgrade mini-app filters by base OVR + grade (no boost), so the two ranges are not required to match. The phôi range is the user's own choice in config; no default or automatic widening is applied. `maxPriceEach` is normalized so a decimal comma with a K/M/B suffix (`2,5M`) becomes `2.5M`, matching `parseMarketPrice()`.
 - ICON: `maxPlayersPerBatch <= 3`; `grade === 1` and `quantity === 1`; `maxTaskSlots <= 3`; boolean flags; non-negative timeouts.
 
 ### Effective values in the committed `config.json`
@@ -314,7 +310,7 @@ Validation (`validateConfig`) enforces:
 | Key | Value |
 |---|---|
 | `ovrMin` / `ovrMax` | 118 / 123 |
-| `maxPriceBP` | 777777 |
+| `maxPriceBP` | 800000 |
 | `quantityPerAttempt` | 3 |
 | `maxPerCycle` | 14 |
 | `maxCycleWaitMinutes` | 240 |
@@ -323,7 +319,7 @@ Validation (`validateConfig`) enforces:
 | `menuBusyRetrySeconds` | 15 |
 | `upgradeFrameTimeoutSeconds` | 30 |
 | `upgrade.targetGrade` | 7 |
-| `upgrade.ovrPhoi` | `"118"` |
+| `upgrade.ovrPhoi` | `"115-120"` |
 | `upgrade.maxPriceEach` | `"2M"` |
 | `upgrade.waitMs` | 5000 |
 | `upgrade.minRatio` | 74 |

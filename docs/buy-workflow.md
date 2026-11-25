@@ -166,7 +166,7 @@ The controller passes `units = config.maxPerCycle` as the cycle quantity. Values
 | OVR max | `config.ovrMax` (123) |
 | Quantity per attempt | `config.quantityPerAttempt` (3) |
 | Quantity per cycle | `config.maxPerCycle` (14) |
-| Max price (BP) | `config.maxPriceBP` (777777) |
+| Max price (BP) | `config.maxPriceBP` (800000) |
 
 `setCycleField()` retries up to 4 times:
 
@@ -242,7 +242,7 @@ After acceptance:
 - `cycleBaseline` is rebuilt from the acknowledged chat text and its latest activity marker.
 - The mini-app is closed.
 - The started worker id is logged from `(worker <id>)`.
-- A stale `pendingBuyCompletion` is cleared because a new cycle has started.
+- `pendingBuyCompletion` is set **only** for a genuinely `completed` outcome and cleared immediately for every other outcome (timeout, stopped, E006, pivot), before a new cycle starts too. This guarantees the next iteration always re-checks `/stop` instead of trusting a stale completion.
 
 ## 9. Step 6 — wait for the cycle outcome
 
@@ -266,6 +266,7 @@ When the cap is reached `waitForCycleCompletion` returns `{ status: "cycle-timeo
 5. New full-inventory stop → `inventory-full`
 6. New stopped notice → `purchase-stopped`
 7. New completion notice → `completed`
+8. **Worker-gone detection:** the ICON runner also sends `/stop` in the same chat. If a fresh `/stop` menu has no `Mua phôi |` option while this cycle already has purchases/activity in the fresh window, the bot-side auto-buy worker is gone and will never send a completion. The waiter returns `cycle-timeout` with `reason: "worker-gone"` immediately instead of sitting until `maxCycleWaitMinutes` (22/11: a 13/14 purchase with no completion waited 107 minutes). This goes through the same auto-recovery path as a normal timeout.
 
 Bare "Đã dừng N luồng thành công" is deliberately **not** used as an orphan terminal because it could belong to another manual worker.
 
@@ -317,7 +318,7 @@ Code: `features/buy/outcome.js#settleBuyOutcome`.
 | `stop-requested` | Send `/stopauto` via `stopPurchaseWorker`; resume only if a start command was received during the stop |
 | `inventory-full` | `waitForInventoryReceipt()` up to 5 min. Receipt confirmed → in `master` return `pivotToUpgrade`; otherwise open the next buy cycle. Receipt absent → go inactive for safety |
 | `system-error` | Log E006 message, go inactive, wait for `/startagent` |
-| `purchase-stopped` | Log, go inactive, wait for `/startagent` |
+| `purchase-stopped` | In `master`, log and keep the agent alive: re-check ICON inventory after a short cooldown and only buy again if `eligible > 0`. Non-master keeps the old idle behavior |
 | `completed` | Log `completedLog` and open the next cycle |
 | any other | Treated as completed: log and open the next cycle |
 
@@ -383,7 +384,7 @@ stateDiagram-v2
 |---|---|---|
 | `ovrMin` | 118 | Mini-app minimum OVR |
 | `ovrMax` | 123 | Mini-app maximum OVR |
-| `maxPriceBP` | 777777 | Max price written to the BP field |
+| `maxPriceBP` | 800000 | Max price written to the BP field |
 | `quantityPerAttempt` | 3 | Players per purchase attempt (validator allows ≤5) |
 | `maxPerCycle` | 14 | Players per buy cycle / mini-app 4th field |
 | `maxCycleWaitMinutes` | 240 | Hard cap on waiting for a cycle terminal; must exceed the bot's ~180 min hold. On expiry the agent auto-recovers and rechecks inventory after 45 s instead of stopping |

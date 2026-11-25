@@ -28,6 +28,7 @@ const {
   throwBotSystemError
 } = require("../../lib/bot-signals");
 const { CONTROL_START_COMMANDS } = require("../../lib/control-commands");
+const { isRecentIconStopCommand } = require("../../lib/icon-activity");
 const {
   ensureMessageComposer,
   refillComposer
@@ -94,9 +95,7 @@ async function waitForStartAcknowledgement(
   let verifyError = null;
   for (let attempt = 1; attempt <= 2 && !status; attempt += 1) {
     try {
-      status = ui
-        ? await ui.withLock(() => checkAutoBuyRunning(page, rl))
-        : await checkAutoBuyRunning(page, rl);
+      status = await checkAutoBuyRunning(page, rl, { ui });
     } catch (error) {
       verifyError = error;
       if (attempt < 2) {
@@ -138,14 +137,23 @@ async function waitForStartAcknowledgement(
 // Không bao giờ bấm option trong menu /stop. Ưu tiên đọc phần tin mới
 // (baselineText) để chống trôi khi chat bị trim hoặc lẫn tin thủ công;
 // nếu bot báo rate-limit cho /stop thì chờ đúng delay rồi gửi lại.
-async function checkAutoBuyRunning(page, rl) {
+async function checkAutoBuyRunning(page, rl, { ui = null } = {}) {
   const reader = chatTextReaders.get(page);
   if (!reader) throw new Error("Chưa khởi tạo theo dõi nội dung Telegram.");
-  let composer = await ensureMessageComposer(page, rl);
-  let baseline = getStopCheckBaseline(reader.snapshot().text);
-  let baselineText = reader.snapshot().text;
-  let rateLimitCount = countBotRateLimitNotices(baselineText);
-  await sendBotCommand(page, composer, "/stop");
+  // Chỉ khóa UI trong lúc gửi lệnh. Việc CHỜ bot trả lời (tối đa 5 phút) phải
+  // nhả khóa để ICON runner vẫn thao tác được.
+  const withUi = (fn) => (ui ? ui.withLock(fn) : fn());
+  let composer = null;
+  let baseline = null;
+  let baselineText = "";
+  let rateLimitCount = 0;
+  await withUi(async () => {
+    composer = await ensureMessageComposer(page, rl);
+    baseline = getStopCheckBaseline(reader.snapshot().text);
+    baselineText = reader.snapshot().text;
+    rateLimitCount = countBotRateLimitNotices(baselineText);
+    await sendBotCommand(page, composer, "/stop");
+  });
   const deadline = Date.now() + config.botResponseTimeoutMinutes * 60_000;
   let snapshot = reader.snapshot();
   while (Date.now() < deadline) {
@@ -182,10 +190,12 @@ async function checkAutoBuyRunning(page, rl) {
       if (retryDelayMs >= deadline - Date.now()) break;
       log(`Bot từ chối /stop do gửi quá nhanh; chờ ${Math.ceil(retryDelayMs / 1_000)} giây rồi gửi lại.`);
       await page.waitForTimeout(retryDelayMs);
-      baseline = getStopCheckBaseline(reader.snapshot().text);
-      baselineText = reader.snapshot().text;
-      rateLimitCount = countBotRateLimitNotices(baselineText);
-      composer = await refillComposer(page, rl, composer, "/stop");
+      await withUi(async () => {
+        baseline = getStopCheckBaseline(reader.snapshot().text);
+        baselineText = reader.snapshot().text;
+        rateLimitCount = countBotRateLimitNotices(baselineText);
+        composer = await refillComposer(page, rl, composer, "/stop");
+      });
       snapshot = reader.snapshot();
       continue;
     }
@@ -204,6 +214,17 @@ async function checkAutoBuyRunning(page, rl) {
   error.code = "STOP_CHECK_TIMEOUT";
   error.userMessage = error.message;
   throw error;
+}
+
+// Chỉ tin vào menu /stop "không còn worker" khi chu kỳ này thật sự có activity
+// trong cửa sổ fresh, tránh kết luận sai ngay sau khi vừa bấm bắt đầu.
+function cycleActiveFromFresh(fresh) {
+  const text = fresh || "";
+  return (
+    countMatches(text, PURCHASE_RE) > 0 ||
+    countMatches(text, ACTIVE_RE) > 0 ||
+    countMatches(text, STARTED_RE) > 0
+  );
 }
 
 // Chờ chu kỳ hiện tại kết thúc: completed | purchase-stopped | inventory-full | system-error | stop-requested
@@ -331,6 +352,35 @@ async function waitForCycleCompletion(
     }
     if (hasNewStoppedNotice(snapshot.text, baseline.stopped, baseline.autoBuyStopped, false)) {
       return { status: "purchase-stopped" };
+    }
+    // ICON runner cũng gửi /stop đều. Menu trả về trong cửa sổ attribution của
+    // ICON (/stop vừa gửi) bị bỏ qua; ngoài cửa sổ đó, một menu MỚI không còn nút
+    // dừng Auto Mua Phôi dù chu kỳ đã có activity nghĩa là worker bot đã biến mất
+    // (không sẽ có "Đã mua đủ N cầu thủ") -> tự recovery thay vì treo tới
+    // maxCycleWaitMinutes (lỗi 22/11: chờ 107 phút rồi mới dừng).
+    if (
+      baselineText &&
+      cycleActiveFromFresh(fresh) &&
+      !isRecentIconStopCommand()
+    ) {
+      const stopResult = getStopCheckResult(
+        snapshot.text,
+        getStopCheckBaseline(baselineText),
+        baselineText
+      );
+      if (stopResult === "auto-buy-not-running") {
+        const waitedMs = Date.now() - startedAt;
+        log(
+          "Menu /stop mới không còn nút dừng Auto Mua Phôi dù chu kỳ đã mua; " +
+            "coi worker đã kết thúc mà không gửi completion, tự recovery."
+        );
+        return {
+          status: "cycle-timeout",
+          reason: "worker-gone",
+          waitedMs,
+          waitedMinutes: Math.max(1, Math.round(waitedMs / 60_000))
+        };
+      }
     }
     const completedCount = getCycleCompletionNotice(snapshot.text, baseline);
     if (completedCount !== null) {

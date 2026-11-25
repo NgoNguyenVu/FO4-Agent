@@ -16,7 +16,8 @@ const {
 const {
   chatTextReaders
 } = require("../../lib/chat-runtime");
-const { log } = require("../agent-log");
+const { shorten } = require("../../lib/text-utils");
+const { log, dataDir } = require("../agent-log");
 const {
   closeMiniApp,
   getPaymentFrameLocator,
@@ -39,10 +40,8 @@ const {
 } = require("./patterns");
 
 const START_BUTTON_NAME = "Bắt đầu Auto Mua";
-
-function shortenText(text, max = 180) {
-  return String(text || "").replace(/\s+/g, " ").trim().slice(0, max);
-}
+const DEBUG_SHOT_DIR = path.join(dataDir, "debug");
+const DEBUG_SHOT_LIMIT = 20;
 
 // Trang lỗi hạ tầng của bot (ngrok ERR_NGROK_* / upstream web service chết)
 // không phải lỗi render của mini-app: controller phải chờ bot khôi phục.
@@ -51,7 +50,7 @@ function assertMiniAppServerUp(text) {
   const error = new Error(
     "Máy chủ mini-app Auto Mua của bot không phản hồi " +
       "(ngrok không kết nối được upstream web service). " +
-      `Nội dung: ${shortenText(text, 160)}`
+      `Nội dung: ${shorten(text, 160)}`
   );
   error.code = "MINI_APP_SERVER_DOWN";
   throw error;
@@ -59,12 +58,20 @@ function assertMiniAppServerUp(text) {
 
 async function saveMiniAppDebug(page, error) {
   try {
-    const dir = path.join(process.cwd(), "debug");
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(DEBUG_SHOT_DIR, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const file = path.join(dir, `auto-mua-${stamp}.png`);
+    const file = path.join(DEBUG_SHOT_DIR, `auto-mua-${stamp}.png`);
     await page.screenshot({ path: file });
     error.debugScreenshot = file;
+    // Giữ tối đa 20 ảnh mới nhất (tên có timestamp nên sort desc là đủ).
+    const shots = fs
+      .readdirSync(DEBUG_SHOT_DIR)
+      .filter((name) => /^auto-mua-.*\.png$/i.test(name))
+      .sort()
+      .reverse();
+    for (const old of shots.slice(DEBUG_SHOT_LIMIT)) {
+      try { fs.rmSync(path.join(DEBUG_SHOT_DIR, old), { force: true }); } catch { /* bỏ qua */ }
+    }
     log(`Đã lưu ảnh màn hình lỗi mini-app Auto Mua: ${file}`);
   } catch (captureError) {
     log(`Không lưu được ảnh mini-app Auto Mua: ${captureError.message}`);
@@ -134,7 +141,7 @@ async function waitForTradeFrame(page) {
           `Mini-app Auto Mua đã có nút Bắt đầu nhưng chưa hiện BP ` +
             `(${Math.round((Date.now() - startWait) / 1000)}s); tiếp tục chờ... ` +
             `[Telegram ${page.url()}] [${lastFrameInfo}] ` +
-            `Nội dung: ${shortenText(text) || "(trống)"}`
+            `Nội dung: ${shorten(text) || "(trống)"}`
         );
       }
     } else if (
@@ -149,7 +156,7 @@ async function waitForTradeFrame(page) {
       } catch { /* iframe chưa có body */ }
       lastBodyText = current;
       assertMiniAppServerUp(current);
-      if (!shortenText(current)) {
+      if (!shorten(current)) {
         // Iframe trắng không phải "đang tải chậm". getTradeFrame sẽ đóng và thử
         // lại chính menu hiện có (không gửi /tn); nếu vẫn trắng thì controller
         // tự reload Telegram Web.
@@ -165,7 +172,7 @@ async function waitForTradeFrame(page) {
         `Mini-app Auto Mua đang tải, chưa thấy nút Bắt đầu ` +
           `(${Math.round((Date.now() - startWait) / 1000)}s); tiếp tục chờ... ` +
           `[Telegram ${page.url()}] [${lastFrameInfo}] ` +
-          `Nội dung iframe: ${shortenText(current)}`
+          `Nội dung iframe: ${shorten(current)}`
       );
     }
     // Deadline phải kiểm tra cả khi nút CHƯA từng hiện. Trước đây check nằm
@@ -177,7 +184,7 @@ async function waitForTradeFrame(page) {
       const error = new Error(
         `Iframe mini-app Auto Mua ${state} trong 45 giây. ` +
           `Telegram: ${page.url()}. Iframe: ${lastFrameInfo}. ` +
-          `Nội dung: ${shortenText(lastBodyText) || "(trống)"}`
+          `Nội dung: ${shorten(lastBodyText) || "(trống)"}`
       );
       error.code = "MINI_APP_UI_NOT_READY";
       throw error;

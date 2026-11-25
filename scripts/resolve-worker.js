@@ -20,6 +20,7 @@ const {
   createWorkerRegistry,
   defaultIsProcessAlive
 } = require("../lib/worker-registry");
+const { writeJsonAtomic } = require("../lib/atomic-file");
 
 const EXIT_OK = 0;
 const EXIT_ERROR = 1;
@@ -120,14 +121,6 @@ function readJson(file) {
     if (error.code === "ENOENT") return null;
     throw new Error(`Không đọc được ${file}: ${error.message}`);
   }
-}
-
-function writeJsonAtomic(file, value) {
-  const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), "utf8");
-  fs.renameSync(tmp, file);
 }
 
 // Process lock còn "sống" khi lease chưa hết VÀ pid vẫn tồn tại. Chỉ dựa vào
@@ -265,6 +258,19 @@ function main(argv) {
     snapshot = readJson(statePath);
   } catch (error) {
     console.error(error.message);
+    return EXIT_ERROR;
+  }
+  if (
+    snapshot !== null &&
+    (typeof snapshot !== "object" ||
+      Array.isArray(snapshot) ||
+      (snapshot.workers !== undefined && !Array.isArray(snapshot.workers)) ||
+      (snapshot.process !== undefined &&
+        (typeof snapshot.process !== "object" ||
+          snapshot.process === null ||
+          Array.isArray(snapshot.process))))
+  ) {
+    console.error(`Cấu trúc ${statePath} không hợp lệ (fail-closed).`);
     return EXIT_ERROR;
   }
 

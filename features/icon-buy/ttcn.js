@@ -2,6 +2,7 @@
 // Chỉ bấm nút Hủy trên đúng card mới; không dùng /stop và không đụng worker
 // mua/nâng đang chạy.
 const { withTimeout } = require("../../lib/playwright-utils");
+const { shorten } = require("../../lib/text-utils");
 const { config } = require("../config");
 const { log } = require("../agent-log");
 const {
@@ -26,10 +27,6 @@ const AUTO_BUY_LABEL = "Auto Mua Phôi";
 const LOADING_SELECTOR = "#loading-cancel-message";
 const ERROR_SELECTOR = "#error-cancel-message";
 const LIST_SELECTOR = "#cancelList";
-
-function shorten(text, max = 400) {
-  return String(text || "").replace(/\s+/g, " ").trim().slice(0, max);
-}
 
 function cssAttr(value) {
   return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;

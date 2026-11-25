@@ -11,6 +11,8 @@ const {
   isBrowserSessionClosed
 } = require("../lib/playwright-utils");
 const { reattachChatObserver } = require("../lib/chat-runtime");
+const { withDeadline } = require("../lib/with-deadline");
+const { shorten } = require("../lib/text-utils");
 const {
   BOT_COMMAND_DELAY_MS,
   TN_COMMAND_COOLDOWN_MS,
@@ -179,10 +181,6 @@ async function sendBotCommand(page, composer, command) {
   await withTimeout(composer.press("Enter"), PLAYWRIGHT_TIMEOUT_MS, `gửi lệnh ${command}`);
 }
 
-function shortenText(text, max = 100) {
-  return String(text || "").replace(/\s+/g, " ").trim().slice(0, max);
-}
-
 // Nếu Telegram còn giữ iframe cũ trong DOM, iframe cuối cùng là cái mới mở.
 function getPaymentFrameLocator(page) {
   return page.locator("iframe.payment-verification").last().contentFrame();
@@ -203,7 +201,7 @@ async function inspectPaymentFrames(page) {
   try { visible = await iframe.isVisible(); } catch { /* DOM đang đổi */ }
   let src = "";
   try { src = (await iframe.getAttribute("src")) || ""; } catch { /* bỏ qua */ }
-  const safeSrc = src ? ` src=${shortenText(src.split(/[?#]/)[0], 100)}` : "";
+  const safeSrc = src ? ` src=${shorten(src.split(/[?#]/)[0], 100)}` : "";
   return {
     count,
     visible,
@@ -324,7 +322,11 @@ async function openTelegramPage(context, page) {
     try {
       const browser = currentContext?.browser?.();
       if (!browser || !browser.isConnected() || currentPage?.isClosed?.()) {
-        currentContext?.close?.().catch(() => {});
+        await withDeadline(
+          currentContext?.close?.().catch(() => {}) ?? Promise.resolve(),
+          15_000,
+          undefined
+        );
         currentContext = await withTimeout(
           launchTelegramContext(),
           180_000,

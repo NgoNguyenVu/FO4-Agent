@@ -6,6 +6,7 @@
 // chỉ đọc menu; tuyệt đối không bấm nút dừng hoặc hủy nào.
 const { chatTextReaders } = require("../../lib/chat-runtime");
 const { STOP_NO_RUNNING_RE } = require("../../lib/bot-patterns");
+const { markIconStopCommand } = require("../../lib/icon-activity");
 const { config } = require("../config");
 const {
   getVisibleMessageIds,
@@ -132,6 +133,8 @@ async function readStopMenu(page, rl) {
     return null;
   }
 
+  // Đánh dấu để buy waiter không nhầm menu /stop này với worker mua biến mất.
+  markIconStopCommand();
   await sendSingleLineMessage(page, rl, "/stop");
   log(`Đã gửi /stop để chụp baseline task; chờ menu trong ${config.iconBuy.menuTimeoutSeconds}s.`);
   // Menu /stop được phục vụ theo cùng cấu hình menuResponseTimeoutSeconds của

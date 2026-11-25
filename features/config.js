@@ -2,7 +2,6 @@
 // Trước đây validateConfig trong autobuy.js phải lazy-require autonangcap,
 // tạo phụ thuộc chéo giữa hai feature.
 const rawConfig = require("../config.json");
-const { validateSpendLimits } = require("../lib/spend-guard");
 const { createValidators } = require("../lib/config-validators");
 const { parseOvrSpec } = require("../lib/ovr-spec");
 
@@ -13,6 +12,25 @@ const {
   requireNonEmptyString
 } = createValidators("Cấu hình ");
 
+// Chuẩn hóa chuỗi OVR trước khi lưu/gõ vào mini-app: " 115, 118 - 120 " ->
+// "115,118-120". Không lọc phần tử rỗng để giá trị sai ("118,") vẫn bị
+// validate chặn thay vì âm thầm hợp lệ.
+function normalizeOvrSpec(raw) {
+  return String(raw ?? "")
+    .split(",")
+    .map((part) => part.trim().replace(/\s*-\s*/g, "-"))
+    .join(",");
+}
+
+// "2,5M" là thập phân kiểu Việt; chuẩn về "2.5M" để parseMarketPrice và bot
+// không đọc nhầm thành 25M. Dấu phẩy ở số không có hậu tố ("625,000") giữ nguyên
+// vì đó là dấu hàng nghìn.
+function normalizePriceSpec(raw) {
+  return String(raw ?? "")
+    .trim()
+    .replace(/^(\d+),(\d+)(\s*[KMB])$/i, "$1.$2$3");
+}
+
 const config = {
   ...rawConfig,
   // Chờ menu /tn ngắn hơn thời gian chờ ack dài (mua/nâng cấp). Bot thường trả
@@ -22,7 +40,8 @@ const config = {
   upgradeFrameTimeoutSeconds: rawConfig.upgradeFrameTimeoutSeconds ?? 30,
   upgrade: {
     targetGrade: 6,
-    ovrPhoi: "114,115,116,117",
+    // Không đặt dải phôi mặc định: người dùng tự chọn trong config.json.
+    // Để trống thì validateConfig báo lỗi rõ thay vì âm thầm áp một dải lạ.
     maxPriceEach: "2M",
     waitMs: 3000,
     minRatio: 100,
@@ -32,30 +51,13 @@ const config = {
     // danh sách target, sau đó lặp lại mỗi 120 giây. Tải lại kho là thao tác đọc.
     targetCheckDelaySeconds: 60,
     targetCheckIntervalSeconds: 120,
-    ...(rawConfig.upgrade || {})
+    ...(rawConfig.upgrade || {}),
+    // Luôn lưu dạng đã chuẩn hóa; mini-app nhận chuỗi này nguyên văn.
+    ovrPhoi: normalizeOvrSpec(rawConfig.upgrade?.ovrPhoi ?? ""),
+    maxPriceEach: normalizePriceSpec(rawConfig.upgrade?.maxPriceEach ?? "2M")
   },
-  // Giới hạn chi tiêu (TASK-003 Stage A). Mặc định TẮT và cap = 0 (fail closed):
-  // module lib/spend-guard.js đã sẵn sàng nhưng chưa nối vào buy/icon/upgrade,
-  // nên hành vi giao dịch hiện tại không đổi. Bật enforcement cần Owner Decision.
-  spendLimits: {
-    enabled: false,
-    perRunBP: 0,
-    perDayBP: 0,
-    perWeekBP: 0,
-    perFeatureBP: {
-      buy: 0,
-      upgrade: 0,
-      icon: 0
-    },
-    ...(rawConfig.spendLimits || {})
-  },
-  liveTrading: {
-    enabled: false,
-    requireConfirmation: true,
-    dryRunDefault: true,
-    allowedProfiles: [],
-    ...(rawConfig.liveTrading || {})
-  },
+  // Giới hạn chi tiêu / live trading đã bị bỏ: TASK-003 Stage B là WONT_DO,
+  // giữ lại block config chỉ gây hiểu nhầm là agent đang enforce.
   // Process lock + worker registry (TASK-005). State ghi ngoài repo ở
   // <LOCALAPPDATA>/FO4PurchaseAgent/state/; đường dẫn do agent.js quyết định.
   worker: {
@@ -147,7 +149,12 @@ function validateBuyConfig() {
 }
 
 function getUpgradeSpec() {
-  return { ...config.upgrade };
+  return {
+    ...config.upgrade,
+    // Chuẩn hóa lại ở điểm xuất ra: test/đổi config lúc runtime vẫn được sạch.
+    ovrPhoi: normalizeOvrSpec(config.upgrade.ovrPhoi),
+    maxPriceEach: normalizePriceSpec(config.upgrade.maxPriceEach)
+  };
 }
 
 function validateUpgradeConfig() {
@@ -163,8 +170,10 @@ function validateUpgradeConfig() {
   })) {
     requireNonNegativeInteger(value, `upgrade.${key}`);
   }
-  if (s.targetGrade < 1) {
-    throw new Error("Cấu hình upgrade.targetGrade phải >= 1.");
+  // Combobox của mini-app nâng chỉ có +2 .. +13. Giá trị ngoài dải này vẫn qua
+  // được validate kiểu số nhưng sẽ throw giữa phiên khi selectOption.
+  if (s.targetGrade < 2 || s.targetGrade > 13) {
+    throw new Error("Cấu hình upgrade.targetGrade phải nằm trong 2..13 (dải combobox của mini-app).");
   }
   if (s.minRatio > 100) {
     throw new Error("Cấu hình upgrade.minRatio phải nằm trong 0..100.");
@@ -236,44 +245,21 @@ function validateWorkerConfig() {
   }
 }
 
-function validateLiveTradingConfig() {
-  const live = config.liveTrading || {};
-  for (const key of ["enabled", "requireConfirmation", "dryRunDefault"]) {
-    if (typeof live[key] !== "boolean") {
-      throw new Error(`Cấu hình liveTrading.${key} phải là true/false.`);
-    }
-  }
-  if (!Array.isArray(live.allowedProfiles)) {
-    throw new Error("Cấu hình liveTrading.allowedProfiles phải là mảng.");
-  }
-  for (const profile of live.allowedProfiles) {
-    if (typeof profile !== "string" || !profile.trim()) {
-      throw new Error("liveTrading.allowedProfiles chỉ chứa chuỗi không rỗng.");
-    }
-  }
-  if (live.dryRunDefault !== true) {
-    throw new Error(
-      "liveTrading.dryRunDefault phải là true: agent chỉ chạy live khi có cờ --live và env rõ ràng."
-    );
-  }
-}
-
 function validateConfig() {
   validateBuyConfig();
   validateUpgradeConfig();
   validateIconBuyConfig();
   validateWorkerConfig();
-  validateSpendLimits(config.spendLimits);
-  validateLiveTradingConfig();
 }
 
 module.exports = {
   config,
   getUpgradeSpec,
+  normalizeOvrSpec,
+  normalizePriceSpec,
   validateBuyConfig,
   validateUpgradeConfig,
   validateIconBuyConfig,
   validateWorkerConfig,
-  validateLiveTradingConfig,
   validateConfig
 };

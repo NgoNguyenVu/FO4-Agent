@@ -8,6 +8,7 @@
 const readline = require("node:readline/promises");
 const { stdin, stdout } = require("node:process");
 const { isTelegramLoginPage } = require("../lib/browser-session");
+const { withDeadline } = require("../lib/with-deadline");
 const {
   withTimeout,
   isPlaywrightTimeout,
@@ -49,7 +50,7 @@ const {
 } = require("../lib/e006-cooldown");
 const {
   promptWakeable,
-  wakePendingPrompt,
+  wakeAllPendingPrompts,
   setWaitingForRecoveryPrompt,
   isWaitingForPrompt
 } = require("./interactive-prompt");
@@ -85,7 +86,8 @@ const {
   pivotMasterToUpgrade,
   checkInventoryIcons,
   decideInventoryAction,
-  stopUpgradeWorker
+  stopUpgradeWorker,
+  upgradeFailureBackoffMs
 } = require("./upgrade");
 const { runIconBuy } = require("./icon-buy");
 const { iconReceivePivotPlan } = require("./upgrade/receive-pivot");
@@ -112,8 +114,7 @@ async function main() {
   let remoteResetRequested = false;
   let resetClosePromise = Promise.resolve();
   let agentActive = false;
-  let mode = null; // null=idle, "master"=mua+nâng; buy/nang chỉ là pivot nội bộ
-  let upgradeBlockedTargetIds = new Set();
+  let mode = null; // null=idle, "master"=mua+nâng (duy nhất)
   let sessionUnavailable = false;
   let nextMenuAttemptAt = 0;
   // Khi bot chưa trả menu, giãn dần khoảng thử lại để không gửi /tn dồn dập.
@@ -147,6 +148,9 @@ async function main() {
   const e006Cooldown = createE006Cooldown({ log, logError });
   // Upgrade bị E006 giữa phase nâng: sau cooldown chạy lại đúng phase nâng.
   let pendingUpgradeRetry = false;
+  // Số lượt nâng thất bại liên tiếp (không tiêu thụ phôi) do pivot báo về.
+  // Tồn tại qua nhiều phase nâng để chặn vòng "mua phôi -> nâng fail -> mua".
+  const upgradeFailureState = { consecutive: 0 };
 
   const deferE006 = (flow, error = null, options = {}) => {
     const state = e006Cooldown.defer(flow, error, options);
@@ -158,8 +162,7 @@ async function main() {
     iconStopRequested = true;
     if (!iconMonitor) return true;
     const task = iconMonitor;
-    const timeout = new Promise((resolve) => setTimeout(() => resolve(false), 45_000));
-    const stopped = await Promise.race([task.then(() => true), timeout]);
+    const stopped = await withDeadline(task.then(() => true), 45_000, false);
     if (!stopped) {
       log(`Luồng ICON chưa dừng sau 45s (${reason}); tiếp tục khôi phục an toàn.`);
     }
@@ -292,11 +295,9 @@ async function main() {
         logError(`Không dừng được luồng ICON khi shutdown: ${error.message}`);
       }
       if (agentActive) {
-        const stopWorkers =
-          mode === "nang"
-            ? [stopUpgradeWorker]
-            : [stopPurchaseWorker, stopUpgradeWorker];
-        for (const stopWorker of stopWorkers) {
+        // Chế độ master có thể có cả worker mua lẫn worker nâng; luôn thử dừng
+        // cả hai (mỗi hàm tự xử lý trường hợp không có worker để dừng).
+        for (const stopWorker of [stopPurchaseWorker, stopUpgradeWorker]) {
           try {
             await stopWorker(page, rl);
           } catch (error) {
@@ -330,36 +331,47 @@ async function main() {
   });
   const rememberBuyCompletion = (outcome, source) => {
     const record = createBuyCompletionRecord(outcome, source);
-    if (record) pendingBuyCompletion = record;
+    // Chỉ giữ dấu completion của chu kỳ vừa KẾT THÚC THẬT (completed). Mọi outcome
+    // khác (timeout, stopped, system-error...) phải xóa cờ này, nếu không vòng
+    // sau sẽ bỏ qua bước /stop và có thể mở chồng worker mua.
+    pendingBuyCompletion = record || null;
   };
 
   const handleControlCommand = (command) => {
     if (command === "stopagent") {
-      void stopIconMonitor("/stopagent");
+      void stopIconMonitor("/stopagent").catch((error) =>
+        logError(`Không dừng được ICON khi nhận /stopagent: ${error.message}`)
+      );
       return;
     }
     if (command !== "resetagent" || remoteResetRequested) return;
     remoteResetRequested = true;
-    void stopIconMonitor("/resetagent");
+    void stopIconMonitor("/resetagent").catch((error) =>
+      logError(`Không dừng được ICON khi nhận /resetagent: ${error.message}`)
+    );
     agentActive = false;
     mode = null;
-    upgradeBlockedTargetIds = new Set();
     pendingBuyCompletion = null;
     pendingUpgradeRetry = false;
+    upgradeFailureState.consecutive = 0;
     sessionUnavailable = true;
     log("Nhận /resetagent; agent về idle ngay, đang khởi động lại Telegram Web, không dừng worker bot.");
-    resetClosePromise = Promise.race([
+    resetClosePromise = withDeadline(
       context.close().catch((error) => {
         console.error(`Không đóng được Chrome để reset agent: ${error.message}`);
       }),
-      new Promise((resolve) => setTimeout(() => resolve("close-timeout"), 20_000))
-    ]);
-    if (isWaitingForPrompt()) wakePendingPrompt();
+      20_000,
+      "close-timeout"
+    );
+    if (isWaitingForPrompt()) wakeAllPendingPrompts();
   };
 
   // Chạy phase nâng cấp. Tách khỏi handleBuyOutcome để vòng ACTIVE có thể gọi
   // lại đúng phase này sau cooldown E006 mà không phải giả lập một chu kỳ mua.
   const runUpgradePivot = async () => {
+    // Chuyển pha mua -> nâng: dấu completion của chu kỳ mua trước không còn
+    // giá trị, không được giữ lại làm bỏ qua /stop ở chu kỳ mua kế tiếp.
+    pendingBuyCompletion = null;
     if (e006Cooldown.isDeferred(E006_FLOWS.UPGRADE)) {
       // Kho vẫn đầy nhưng upgrade đang bị hoãn: không mở mini-app kiểm tra kho
       // liên tục, chờ hết cooldown rồi pendingUpgradeRetry chạy lại.
@@ -391,7 +403,8 @@ async function main() {
         rl,
         async (...args) => runSingleUpgrade(...args),
         log,
-        ui
+        ui,
+        upgradeFailureState
       );
     } catch (error) {
       if (isE006Error(error)) {
@@ -404,6 +417,24 @@ async function main() {
         nextInventoryCheckAt =
           Date.now() + Math.max(1_000, e006Cooldown.remainingMs(E006_FLOWS.UPGRADE));
         agentActive = true;
+        return false;
+      }
+      // UI/spec mismatch hoặc thiếu nút start: lỗi an toàn, không phải worker hỏng.
+      // Đóng worker sạch, backoff rồi kiểm tra lại kho thay vì idle/unknown.
+      if (
+        error.code === "UPGRADE_UI_MISMATCH" ||
+        error.code === "UPGRADE_START_BUTTON_MISSING"
+      ) {
+        workerSession.stop("upgrade", { reason: error.code });
+        upgradeFailureState.consecutive += 1;
+        const backoffMs = upgradeFailureBackoffMs(upgradeFailureState.consecutive);
+        inventoryKnownAvailable = false;
+        nextInventoryCheckAt = Date.now() + backoffMs;
+        agentActive = true;
+        log(
+          `Lỗi UI nâng (${error.code}); giữ agent sống, kiểm tra lại kho sau ` +
+            `${Math.round(backoffMs / 1_000)}s.`
+        );
         return false;
       }
       workerSession.stop("upgrade", {
@@ -424,10 +455,29 @@ async function main() {
       agentActive = true;
       return false;
     }
-    workerSession.stop("upgrade", { reason: "pivot" });
+    workerSession.stop("upgrade", {
+      reason: pivot.pauseBuy ? "upgrade-failures" : pivot.reason || "pivot"
+    });
     miniAppServerDownBackoffSeconds = 60;
     agentActive = pivot.agentActive;
     if (pivot.mode && pivot.mode !== "icon") mode = pivot.mode;
+    if (pivot.pauseBuy) {
+      inventoryKnownAvailable = false;
+      const pauseBackoffMs =
+        pivot.backoffMs || upgradeFailureBackoffMs(upgradeFailureState.consecutive);
+      nextInventoryCheckAt = Date.now() + pauseBackoffMs;
+      log(
+        `Tạm dừng mua thêm phôi sau ${pivot.failureCount || upgradeFailureState.consecutive} ` +
+          `lần nâng thất bại liên tiếp; kiểm tra lại kho ICON sau ` +
+          `${Math.round(pauseBackoffMs / 1_000)}s. ` +
+          "Agent vẫn chạy ICON nền, KHÔNG dừng luồng."
+      );
+      return false;
+    }
+    if (pivot.retryInventoryCheck) {
+      inventoryKnownAvailable = false;
+      nextInventoryCheckAt = Date.now() + (pivot.inventoryCheckDelayMs || 0);
+    }
     return false;
   };
 
@@ -447,6 +497,7 @@ async function main() {
       if (workerSession.isRegistered("buy")) {
         workerSession.stop("buy", { reason: "e006-cooldown" });
       }
+      pendingBuyCompletion = null;
       agentActive = true;
       return false;
     }
@@ -469,6 +520,7 @@ async function main() {
       // Buộc vòng sau kiểm tra /stop trước khi mở chu kỳ mới: recovery có thể
       // chưa dừng được worker nếu bot chậm, nên không bấm chồng.
       initialWorkerCheckDone = true;
+      pendingBuyCompletion = null;
       agentActive = true;
       return false;
     }
@@ -478,12 +530,15 @@ async function main() {
       // tra lại sau 5 phút; vòng ACTIVE vẫn nhận /stopagent.
       inventoryKnownAvailable = false;
       nextInventoryCheckAt = Date.now() + INVENTORY_RECEIPT_RETRY_MS;
+      pendingBuyCompletion = null;
       agentActive = true;
       return false;
     }
     if (next.pivotToUpgrade) {
+      pendingBuyCompletion = null;
       return runUpgradePivot();
     }
+    if (!next.openNext) pendingBuyCompletion = null;
     agentActive = next.agentActive;
     if (next.mode && next.mode !== "icon") mode = next.mode;
     return next.openNext;
@@ -604,7 +659,8 @@ async function main() {
         const restored = workerSession.reconcileOnStartup({
           hasWorkerEvidence:
             getLatestAutoBuyStatus(reader.snapshot().text) === "running",
-          staleFeatures: []
+          staleFeatures: [],
+          ignoreFeatures: ["icon"]
         });
         if (
           restored.action === "block" &&
@@ -629,24 +685,21 @@ async function main() {
         if (command === "stopagent") {
           // /stopagent chỉ dừng worker mua do agent quản lý. Không dò hoặc
           // dừng worker nâng/chức năng khác mà người dùng đang chạy trực tiếp.
-          // Khóa UI cho các thao tác kiểm tra và dừng worker.
-          const { restartRequested } = await ui.withLock(async () => {
-            const currentStatus = await checkAutoBuyRunning(page, rl);
-            let requested = null;
-            if (currentStatus.running) {
-              log("Đang có worker Mua phôi; gửi lệnh dừng theo /stopagent.");
-              requested = await stopPurchaseWorker(page, rl);
-              log(
-                requested
-                  ? "Worker mua đã dừng; đã nhận lệnh start mới trong lúc dừng."
-                  : "Đã dừng worker Mua phôi; agent chờ lệnh mới."
-              );
-            }
-            if (!currentStatus.running) {
-              log("Không có worker Mua phôi do agent quản lý; các worker khác được giữ nguyên.");
-            }
-            return { restartRequested: requested };
-          });
+          // checkAutoBuyRunning tự giữ khóa chỉ lúc gửi /stop; stopPurchaseWorker
+          // là thao tác UI nên được khóa riêng.
+          const currentStatus = await checkAutoBuyRunning(page, rl, { ui });
+          let restartRequested = null;
+          if (currentStatus.running) {
+            log("Đang có worker Mua phôi; gửi lệnh dừng theo /stopagent.");
+            restartRequested = await ui.withLock(() => stopPurchaseWorker(page, rl));
+            log(
+              restartRequested
+                ? "Worker mua đã dừng; đã nhận lệnh start mới trong lúc dừng."
+                : "Đã dừng worker Mua phôi; agent chờ lệnh mới."
+            );
+          } else {
+            log("Không có worker Mua phôi do agent quản lý; các worker khác được giữ nguyên.");
+          }
           agentActive = Boolean(restartRequested);
           if (agentActive) {
             mode = CONTROL_MODE_BY_COMMAND[restartRequested] || "master";
@@ -657,8 +710,10 @@ async function main() {
           const startReconcile = workerSession.reconcileOnStartup({
             hasWorkerEvidence:
               getLatestAutoBuyStatus(reader.snapshot().text) === "running",
-            // Trong cùng process, ICON đang chạy không phải worker stale.
-            staleFeatures: []
+            // Trong cùng process, ICON đang chạy không phải worker stale và
+            // cũng không được đánh unknown (unknown chặn mọi chu kỳ mới).
+            staleFeatures: [],
+            ignoreFeatures: ["icon"]
           });
           if (
             startReconcile.action === "block" &&
@@ -674,10 +729,10 @@ async function main() {
           inventoryKnownAvailable = false;
           nextInventoryCheckAt = 0;
           pendingUpgradeRetry = false;
+          upgradeFailureState.consecutive = 0;
           inventoryReceiptSeen = countInventoryReceivedNotices(
             reader.snapshot().text
           );
-          upgradeBlockedTargetIds = new Set();
           miniAppRecoveryAttempts = 0;
           startAckRetries = 0;
           menuBackoffSeconds = config.menuBusyRetrySeconds;
@@ -693,58 +748,9 @@ async function main() {
         continue;
       }
 
-      // --- ACTIVE: vòng nâng riêng (không đụng mua) ---
-      if (mode === "nang") {
-        if (Date.now() < nextMenuAttemptAt) {
-          await page.waitForTimeout(Math.min(5_000, nextMenuAttemptAt - Date.now()));
-          continue;
-        }
-        const buyStatus = await ui.withLock(() => checkAutoBuyRunning(page, rl));
-        if (buyStatus.running) {
-          agentActive = false;
-          log(
-            "Auto Mua Phôi đang chạy; không mở Auto Nâng Cấp đồng thời. " +
-              "Agent chờ lệnh mới sau khi worker mua kết thúc."
-          );
-          continue;
-        }
-        const upgradeBegin = workerSession.tryBegin("upgrade");
-        if (!upgradeBegin) {
-          agentActive = false;
-          log("Registry đang chặn worker nâng cấp; agent về idle, không mở nâng.");
-          continue;
-        }
-        workerSession.markRunning("upgrade");
-        let up;
-        try {
-          up = await runSingleUpgrade(page, rl, upgradeBlockedTargetIds, ui);
-        } catch (error) {
-          workerSession.stop("upgrade", {
-            unknown: true,
-            reason: error.code || "upgrade-error"
-          });
-          throw error;
-        }
-        workerSession.stop("upgrade", { reason: up.action || "upgrade" });
-        if (up.action === "continue" || up.action === "blocked-target") {
-          miniAppRecoveryAttempts = 0;
-          menuBackoffSeconds = config.menuBusyRetrySeconds;
-          nextMenuAttemptAt = 0;
-          if (up.mode && up.mode !== "icon") mode = up.mode;
-          continue;
-        }
-        agentActive = false;
-        if (up.action === "no-targets") {
-          log("Hết icon dưới target; dừng auto nâng, chờ lệnh mới.");
-        }
-        if (up.action === "no-materials") {
-          log("Hết phôi phù hợp hoặc không có nguyên liệu hợp lệ; dừng auto nâng, chờ lệnh mới.");
-        }
-        if (up.action === "no-progress") {
-          log("Lượt nâng không đạt và không làm target tăng grade; dừng auto nâng, chờ lệnh mới.");
-        }
-        continue;
-      }
+      // Chế độ "nang" (upgrade-only) đã bị bỏ: không có lệnh điều khiển nào chọn
+      // mode này. Auto Nâng chỉ chạy qua runUpgradePivot() trong master; mọi
+      // rewrite mode cũ đều bị bỏ qua ở các nhánh `mode !== "master"`.
 
       // Đang chờ backoff vì bot chưa trả menu: không gửi /stop kiểm tra mỗi
       // vòng (trước đây backoff 15s nên ít thấy, giờ backoff tới 5 phút nên sẽ
@@ -764,7 +770,7 @@ async function main() {
         (initialWorkerCheckDone ||
           getLatestAutoBuyStatus(reader.snapshot().text) === "running")
       ) {
-        const status = await ui.withLock(() => checkAutoBuyRunning(page, rl));
+        const status = await checkAutoBuyRunning(page, rl, { ui });
         if (status.running) {
           const adoptedWorker = getLatestWorkerId(status.baselineText) || "không rõ";
           log(`Bot đang có luồng Mua phôi (worker ${adoptedWorker}); agent chờ luồng này hoàn tất.`);
@@ -1012,7 +1018,7 @@ async function main() {
         );
         let earlyStatus = null;
         try {
-          earlyStatus = await ui.withLock(() => checkAutoBuyRunning(page, rl));
+          earlyStatus = await checkAutoBuyRunning(page, rl, { ui });
         } catch (error) {
           log(
             `Không xác minh được /stop cho tin hoàn tất sớm: ${error.message}; ` +
@@ -1050,6 +1056,16 @@ async function main() {
       if (!openNext) continue;
       // completed -> lặp lại: về đầu vòng ACTIVE để /stop kiểm tra lại rồi mở chu kỳ kế tiếp.
     } catch (error) {
+      // /resetagent là ý định của người dùng: ưu tiên xử lý TRƯỚC mọi phân loại
+      // lỗi (kể cả E006) để không defer cooldown oan hay giữ context đã đóng.
+      if (remoteResetRequested) {
+        await resetClosePromise;
+        remoteResetRequested = false;
+        sessionUnavailable = true;
+        agentActive = false;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        continue;
+      }
       // TASK-005B: lỗi xảy ra khi worker đang ghi trong registry → phải đóng
       // worker. Lỗi recoverable đã biết coi như đã dừng; lỗi còn lại → unknown
       // vì không chắc bot đã dừng (fail-closed, chặn mua chồng).
@@ -1183,17 +1199,6 @@ async function main() {
         agentActive = true;
         continue;
       }
-      // /resetagent từ xa đóng context đang chạy -> thao tác đang dở throw
-      // "Target page, context or browser has been closed". Đó là reset chủ động,
-      // không phải lỗi, nên khôi phục im lặng thay vì in stack gây hoang mang.
-      if (remoteResetRequested) {
-        await resetClosePromise;
-        remoteResetRequested = false;
-        sessionUnavailable = true;
-        agentActive = false;
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-        continue;
-      }
       // Telegram Web có thể tự reload/điều hướng về trang chủ trong lúc đang
       // đọc DOM. page.evaluate khi đó báo "Execution context was destroyed".
       // Đây là lỗi tạm thời của trang, không phải agent hỏng: mở lại chat bot,
@@ -1213,10 +1218,7 @@ async function main() {
         if (isPlaywrightTimeout(error) && !isBrowserSessionClosed(error, page, context)) {
           console.error("Trình duyệt không phản hồi (treo renderer); đóng và mở lại session.");
           try {
-            await Promise.race([
-              context.close().catch(() => {}),
-              new Promise((resolve) => setTimeout(resolve, 15_000))
-            ]);
+            await withDeadline(context.close().catch(() => {}), 15_000, undefined);
           } catch { /* tiếp tục mở mới */ }
         } else {
           console.error("Chrome/Telegram đã đóng; agent sẽ mở lại và khôi phục theo dõi.");
@@ -1250,6 +1252,7 @@ async function main() {
         // /stop lại từ đầu thay vì bỏ qua vì tưởng vẫn còn chu kỳ vừa xong.
         pendingBuyCompletion = null;
         pendingUpgradeRetry = false;
+        upgradeFailureState.consecutive = 0;
       }
       // Chỉ khi vừa chuyển từ active về idle: bỏ lệnh start còn đọng từ lúc
       // active (vd gửi lúc đang chạy). Lệnh cũ mà chạy theo sẽ tốn tiền thật
@@ -1332,16 +1335,4 @@ async function runAgent() {
   }
 }
 
-// Chạy trực tiếp (không qua agent.js): ghi log rồi thoát với mã lỗi.
-function runAgentCli() {
-  runAgent().catch(() => {
-    process.exitCode = 1;
-  });
-}
-
-module.exports = {
-  runAgent,
-  runAgentCli,
-  runAutoBuy: runAgent,
-  runAutoBuyCli: runAgentCli
-};
+module.exports = { runAgent };

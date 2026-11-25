@@ -12,6 +12,8 @@ const ERROR_CODE_RE = /\bE\d{3}\b[^\n]*/gi;
 const RATE_LIMIT_RE = /(?:chờ|đợi)\s*(\d+)\s*s\s*(?:rồi|nữa)?\s*(?:hãy\s*)?(?:thử lại)?/i;
 const ICON_SEASON_RE = /^ICON$/i;
 
+const { parseCompactBp } = require("../../lib/price-utils");
+
 // Menu chức năng của bot có nhãn "Chèn Member Thường" và "Auto Mua Phôi".
 // Dùng để nhận biết menu còn dùng được sau /tn hoặc trong lịch sử gần đây.
 function hasIconMenuSignature(text) {
@@ -183,19 +185,7 @@ function parseRetryAfterSeconds(text, fallback = 5) {
   return Number.isFinite(seconds) && seconds > 0 ? seconds : fallback;
 }
 
-// "26.9M" / "1.2B" / "573,000" -> số BP để so khớp card TTCN.
-function parseCompactBp(raw) {
-  const text = String(raw == null ? "" : raw).trim();
-  const match = text.match(/([\d.,]+)\s*([KMB])?/i);
-  if (!match) return null;
-  let number = Number(match[1].replace(/,/g, ""));
-  if (!Number.isFinite(number)) return null;
-  const unit = (match[2] || "").toUpperCase();
-  if (unit === "K") number *= 1_000;
-  if (unit === "M") number *= 1_000_000;
-  if (unit === "B") number *= 1_000_000_000;
-  return Math.round(number);
-}
+// parseCompactBp giờ nằm ở lib/price-utils; re-export để giữ API của module.
 
 // Card TTCN có dạng: "Tên | Mùa | OVR | Grade | Giá".
 function parseTtcnCardText(text) {

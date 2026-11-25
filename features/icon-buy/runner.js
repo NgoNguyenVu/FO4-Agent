@@ -14,6 +14,7 @@
 // Controller chạy runner này ở nền; các thao tác UI được bảo vệ bởi khóa chung.
 const { chatTextReaders } = require("../../lib/chat-runtime");
 const { E006_COOLDOWN_MS } = require("../../lib/e006-cooldown");
+const { markIconStopCommand } = require("../../lib/icon-activity");
 const { config } = require("../config");
 const { log } = require("../agent-log");
 const { lookupFavoriteIconPlayers } = require("./favorites");
@@ -487,6 +488,8 @@ async function captureStopBaselineWithRetry(page, rl, stopSignal, ui) {
   let reloaded = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (stopSignal()) return null;
+    // Sắp gửi /stop: đánh dấu để buy waiter bỏ qua menu trả về trong cửa sổ này.
+    markIconStopCommand();
     const baseline = await withUi(ui, () => captureStopTaskBaseline(page, rl));
     if (baseline) return baseline;
     if (attempt >= maxAttempts) break;

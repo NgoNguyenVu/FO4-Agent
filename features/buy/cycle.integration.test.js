@@ -109,6 +109,24 @@ test("E006 của ICON được bỏ qua nếu cùng cửa sổ có completion", 
   assert.equal(result.inventoryReceiptSystemErrors, baseline.systemErrors);
 });
 
+test("waitForCycleCompletion detects a vanished buy worker via a fresh /stop menu", async () => {
+  // 22/11: bot mua 13/14 rồi worker biến mất, không gửi completion. Menu /stop
+  // do ICON runner gửi có mặt nhưng không còn nút "Mua phôi |". Phải kết thúc
+  // sớm bằng cycle-timeout để controller recovery thay vì chờ 107 phút.
+  const initial = "Bắt đầu treo auto mua (worker buy-1)";
+  const { page, telegram } = harness(initial);
+  const baseline = getCycleBaseline(initial);
+  telegram.append(
+    "Mua thành công! SPID: 123 Grade: 1 Price: 100.000 BP\n" +
+      "Chọn luồng cần dừng cho chatId 123: Chuyển hàng | VIP | Thường"
+  );
+
+  const result = await waitForCycleCompletion(page, baseline, initial);
+
+  assert.equal(result.status, "cycle-timeout");
+  assert.equal(result.reason, "worker-gone");
+});
+
 test("waitForCycleCompletion trả cycle-timeout thay vì ném lỗi khi quá maxCycleWaitMinutes", async () => {
   const initial = "Bắt đầu treo auto mua (worker buy-1)";
   const { page } = harness(initial);

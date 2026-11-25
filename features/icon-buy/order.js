@@ -1,7 +1,7 @@
 // Mở đúng luồng "Chèn Member Thường -> Mua cầu thủ" và gửi danh sách tối đa
 // 3 cầu thủ. Luôn gửi MứcThẻ=1, SốLượng=1 theo yêu cầu.
 const { chatTextReaders, waitForChatChange } = require("../../lib/chat-runtime");
-const { getFreshSince } = require("../../lib/text-utils");
+const { getFreshSince, shorten } = require("../../lib/text-utils");
 const { withTimeout } = require("../../lib/playwright-utils");
 const { scrollChatToBottom } = require("../../lib/chat-scroll");
 const { config } = require("../config");
@@ -59,10 +59,6 @@ const PURCHASE_HEARTBEAT_MS = 300_000;
 // log chat định kỳ cho mọi mã đã đặt trong phiên để hủy ngay, không đợi log rơi
 // đúng lượt chờ hoặc task còn hiện trong /stop.
 const STRAY_POSITION_SCAN_MS = 15_000;
-
-function shorten(text, max = 600) {
-  return String(text || "").replace(/\s+/g, " ").trim().slice(0, max);
-}
 
 async function waitForBuyPrompt(
   page,

@@ -7,9 +7,9 @@
 Auto Nâng Cấp 2.0 consumes ICON cards from the inventory and upgrades a target to `upgrade.targetGrade`. It runs in two situations:
 
 1. **Master pivot**: after a buy cycle reports `inventory-full` and the bot confirms players were received into the inventory, the controller switches from buying to repeated upgrade runs (`pivotMasterToUpgrade`).
-2. **Upgrade-only branch**: when the controller's `mode` is `"nang"`, it repeatedly calls `runSingleUpgrade` without touching buying (`features/controller.js`).
+2. **Master-only upgrades**: upgrades are always run through `pivotMasterToUpgrade()` after an `inventory-full` buy outcome. The old `mode === "nang"` upgrade-only branch has been removed; no control command ever selected it.
 
-The only control command currently defined is `/startagent`, which maps to `master` (`lib/control-commands.js`). The `"nang"` branch exists but no current control command selects it.
+The only control command currently defined is `/startagent`, which maps to `master` (`lib/control-commands.js`).
 
 ## 2. Trigger and phase ownership
 
@@ -23,10 +23,11 @@ flowchart TD
   PIVOT --> RUN["runSingleUpgrade()"]
   RUN --> DECIDE{"Action"}
   DECIDE -- continue / blocked-target --> RUN
-  DECIDE -- no-materials / no-targets --> CHECK{"Inventory has an ICON below target?"}
+  DECIDE -- no-materials / no-targets / targets-exhausted / upgrade-timeout / upgrade-start-failed / upgrade-ui-mismatch / no-progress --> CHECK{"Inventory has an ICON below target?"}
   CHECK -- yes --> BUY
   CHECK -- no --> WAIT["Wait for a new ICON"]
-  DECIDE -- idle / targets-exhausted / no-progress --> IDLE
+  DECIDE -- idle (explicit stop-requested only) --> IDLE
+  CHECK -- 3 consecutive failures --> PAUSE["pauseBuy + backoff; keep agent alive"]
 ```
 
 The controller calls the pivot only when `mode === "master"` (`handleBuyOutcome`). The buy feature never calls upgrade code; it only returns the `pivotToUpgrade` signal.
@@ -156,7 +157,7 @@ The code fills by visible input label and reads the value back after each attemp
 |---|---|
 | `Thời gian chờ giữa mỗi lần nâng` | `upgrade.waitMs` (5000) |
 | `Tỉ lệ tối thiểu` | `upgrade.minRatio` (74) |
-| `OVR phôi` | `upgrade.ovrPhoi` (`"118"`) |
+| `OVR phôi` | `upgrade.ovrPhoi` (`"115-120"`) |
 | every visible `Giá tối đa` | `upgrade.maxPriceEach` (`"2M"`) |
 
 The target grade is selected from the combobox whose text matches `+2 … +13`:
@@ -211,15 +212,27 @@ Code: `features/upgrade/mini-app.js#filterUpgradePhoi`, `ensureUpgradeFilterInpu
 
 1. Ensure the visible `OVR phôi` input equals `upgrade.ovrPhoi`; rewrite it if not.
 2. Ensure every visible `Giá tối đa` input equals `upgrade.maxPriceEach`.
-3. Click `Lọc phôi từ kho`.
-4. Wait for the loader to hide.
-5. Read the selected count from:
+3. Read `#materialsList` before filtering and log the pool size **and the real OVR printed on every pool card**: `Kho mini-app trước khi lọc: N phôi (...); OVR trong kho: 112:2, 113:5, ...`. `null` means the list has not rendered (not "zero phôi"). This is how a "phôi ảo" suspicion is settled: the cards are real, but their `actualOvr` sits outside `ovrPhoi`.
+4. Click `Lọc phôi từ kho`.
+5. Wait for the loader to hide.
+6. Read the selected count from:
    - `Đã chọn: N phôi`, or
-   - buttons whose text/class contains `ĐÃ CHỌN` or `selected`.
-6. If no phôi is selected, retry the filter once.
-7. Still zero → `NO_UPGRADE_MATERIALS`.
+   - buttons **inside `#materialsList`** whose text/class contains `ĐÃ CHỌN` or `selected`. Scoping to `#materialsList` matters: the selected target card also carries `selected`/`ĐÃ CHỌN`, and counting it made an empty filter look like "1 phôi".
+7. If no phôi is selected, retry the filter once.
+8. Still zero after the retry → `NO_UPGRADE_MATERIALS`, with `error.availableCount` and `error.availableOvrs` from step 3. The agent goes back to Auto Mua (never stops while an ICON below target remains); if phôi are present but none match the filter, this counts as a consecutive upgrade failure for the BP-waste guard. The agent never invents a different OVR range: filtering always uses exactly the list/range set in config.
 
-After filtering, the code reads the OVR printed on each selected card (`OVR <n>`) and requires every selected OVR to be in the allowed set parsed from `upgrade.ovrPhoi` (comma list or inclusive range). Any offender aborts the run before starting.
+`upgrade.ovrPhoi` is the **base/actual OVR** range of the phôi in the inventory, not the buy range. The two features use different OVR definitions:
+
+| Feature | OVR source | Includes OVR boost? |
+|---|---|---|
+| Auto Mua Phôi | listing OVR on TTCN, sent as `ovr_min`/`ovr_max` | Yes |
+| Upgrade mini-app filter | `base OVR + grade increase` from `playerInfoCache` (`calculateActualOvr`) | **No** |
+
+Evidence from the 21/11 02:46 run: 70 reserve players were in the bought OVR 118–123 (boosted) range, but only 7 matched the mini-app's `actualOvr` 118–123. The filter itself is a plain membership test (`ovrs.includes(actualOvr)`); a wider list cannot return fewer phôi than a narrower one. With `ovrPhoi: "112-123"` the same warehouse would yield ~89 usable phôi (the committed config currently keeps `"115-120"`). `validateConfig` only syntax-checks `ovrPhoi`; the phôi range is entirely the user's choice, so no coverage warning or automatic widening is applied.
+
+After filtering, the code reads the OVR printed on each **selected card inside `#materialsList`** (`OVR <n>`) and requires every OVR to be in the allowed set parsed from `upgrade.ovrPhoi` (comma list or inclusive range). Any offender aborts the run before starting. The log records the selected OVR distribution (e.g. `112:5, 115:34`) so a small or wrong selection is visible.
+
+**ICON guard.** The mini-app's material pool does **not** exclude ICON cards — it only checks `state === "reserve"`, not locked/training, OVR and price. A single shared helper `isIconCard()` (`features/upgrade/patterns.js`) now inspects **both** the `img src` badge and `.season-text` containing `ICON`; it is used by the inventory/target-card reader and by the selected-phôi guard, so the two views can no longer disagree. Any ICON in the selection aborts before start instead of being destroyed by the payload. With the committed `maxPriceEach: "2M"` this is already safe in practice: the cheapest ICON in the 21/11 03:30 snapshot costs 20.4M, so none of the 23 ICON cards can pass the price filter. The guard protects against raising the price cap later.
 
 ## 9. Final check and start
 
@@ -227,12 +240,10 @@ Code: `features/upgrade/mini-app.js#checkUpgradeAndStart`, `pressUpgradeStart`.
 
 1. Click the button whose text is exactly `Kiểm tra & Bắt đầu`.
 2. Wait 4 s and read the body.
-3. **No final confirmation UI comparison is performed.** The code logs:
-   - "Đã gửi kiểm tra nâng cấp với N phôi đã lọc; bỏ qua đối chiếu lại UI cuối vì mini-app có thể khóa/đánh dấu lại các thẻ."
-   - A parser `verifyUpgradeFinalUi()` exists in `features/upgrade/patterns.js` but is only referenced by tests; `runUpgradeOnce` does not call it.
+3. **Final confirmation UI is compared against config** via `verifyUpgradeFinalUi()` (`features/upgrade/patterns.js`): number of targets, `Mục tiêu +targetGrade`, `Tỉ lệ tối thiểu minRatio%`, `Số phôi đã chọn = phoiCount`, and BP Protection state. A mismatch throws `UPGRADE_UI_MISMATCH` and the agent **never clicks start**; the mini-app is closed and the failure enters the backoff guard instead of triggering more buying.
 4. Capture the ACK baseline: cycle baseline + progress count + full chat text.
 5. Click the visible, enabled button whose text is exactly `Bắt đầu nâng cấp`.
-6. If no such button exists → `NO_UPGRADE_MATERIALS`.
+6. If no such button exists → `UPGRADE_START_BUTTON_MISSING` (distinct from `NO_UPGRADE_MATERIALS`). The code logs the upgrade-related buttons it did see and the tail of the final UI; this is treated as a UI/render failure, not "out of phôi", so it cannot drive an endless buy→upgrade loop.
 7. Dismiss the "Chúc bạn may mắn" popup by clicking a visible `CLOSE` button, best effort.
 
 The UI lock is released while waiting for the bot, then reacquired in a `finally`.
@@ -262,7 +273,7 @@ Limit: `upgrade.maxUpgradeWaitMinutes` (180 min).
 
 The loop checks, in order:
 
-1. Overall timeout → throw.
+1. Overall timeout → return `{ status: "upgrade-timeout", waitedMs, waitedMinutes }`. The phase closes the mini-app, keeps the agent active, waits a short cooldown, then re-checks ICON inventory (and adopts the worker if the bot is still running). No `unknown` worker and no generic Enter-prompt.
 2. `/stopagent` → `{ status: "stop-requested" }`.
 3. Fresh-text run outcome (`getUpgradeRunOutcome`):
    - new E006 → `system-error`
@@ -333,16 +344,18 @@ Code: `features/upgrade/loop.js#settleUpgradeOutcome`.
 
 | Condition | Action |
 |---|---|
-| `targets-exhausted` | Log, return `targets-exhausted` → phase ends |
-| `system-error` | Log E006, return `idle` |
-| `stop-requested` | Close mini-app, send `/stopnc`; if a start command arrived during the stop → `continue`, else `idle` |
+| `targets-exhausted` | Log, return `targets-exhausted` + `retryInventoryCheck` → controller re-checks ICON inventory |
+| `upgrade-timeout` | Log, return `upgrade-timeout` + `retryInventoryCheck` and a short inventory cooldown; agent stays active |
+| `system-error` | Log E006, return `system-error` (controller defers only the upgrade flow for 10 min) |
+| `stop-requested` | Close mini-app, send `/stopnc`; if a start command arrived during the stop → `continue`, else `idle` (the only legitimate idle path) |
 | `materialsRemaining === 0` | `no-materials` |
 | `(outOfMaterial || bestPossible < possibleRequired) && !reachedTarget && success === 0` | `blocked-target` (add target to phase blacklist) |
 | No progress: `!reachedTarget && success === 0 && finalGrade <= target.grade` | `blocked-target` if a target is known, otherwise `no-progress` |
 | Progress made | `continue` |
 
-`shouldResumeBuyAfterUpgrade(outcome, startGrade)` is true when:
+`shouldResumeBuyAfterUpgrade(outcome, startGrade, consumedCount)` is true when:
 
+- `consumedCount > 0` (phôi burned even without grade change), or
 - `reachedTarget`, or
 - `success > 0`, or
 - `finalGrade > startGrade`.
@@ -353,15 +366,19 @@ Code: `features/upgrade/loop.js#pivotMasterToUpgrade`.
 
 The phase starts with a fresh `blockedTargetIds = new Set()` (the blacklist lasts one phase only) and loops:
 
-1. `runUpgrade(...)` → one target.
+1. `runUpgrade(...)` → one target. The run logs how many phôi were filtered (`phoiCount`) and how many the bot says remain (`materialsRemaining`); `consumedCount = max(0, phoiCount - materialsRemaining)` is logged as `Đã tiêu thụ K phôi trong lượt này`. The phase keeps a running total `consumedPhoi`.
 2. `action === "continue"`:
    - If the user switched to a non-`master` mode, return `{ agentActive: true, mode }`.
-   - If `shouldResumeBuyAfterUpgrade` is true → increment the target counter and continue.
-   - Otherwise log "Nâng cấp xong mà kho không thay đổi gì …" and return `{ agentActive: false }`.
+   - If `shouldResumeBuyAfterUpgrade` is true → increment the target counter and continue. `consumedCount > 0` alone is enough: phôi were burned even if the target did not gain a grade, so trying the next target consumes the remaining phôi instead of stopping early.
+   - Otherwise log "Nâng cấp xong mà kho không thay đổi gì …", count one failure and return `{ agentActive: true, retryInventoryCheck: true }`. The agent is **not** stopped while ICONs may remain.
 3. `decideMasterUpgradePhase(action)`:
    - `continue` / `blocked-target` → try another target
-   - `no-materials` / `no-targets` → return `{ agentActive: true }` so the controller re-checks inventory
-   - anything else (`idle`, `targets-exhausted`, `no-progress`) → return `{ agentActive: false }`
+   - `no-materials` **after a real run** (`consumed: true`, i.e. the bot reported `materialsRemaining === 0`) → return `{ agentActive: true }` so the controller re-checks inventory
+   - `no-materials` **before anything was consumed** (`consumed: false`, the filter produced no materials): always return `{ agentActive: true }` — the controller re-checks ICON inventory and only stops when no ICON is below target. If phôi remain but do not match the configured OVR, the log includes their real OVR distribution and the active `upgrade.ovrPhoi`; this also counts as a failure for the BP-waste guard.
+   - `no-targets` / `targets-exhausted` / `upgrade-timeout` → return `{ agentActive: true, retryInventoryCheck: true }`; `upgrade-start-failed` / `upgrade-ui-mismatch` / `no-progress` count one failure and also return to the inventory gate with agent active
+   - `idle` (a real `stop-requested` with no restart command) → return `{ agentActive: false }`
+
+Every returned `{ pauseBuy: true, backoffMs }` sets `inventoryKnownAvailable = false` and `nextInventoryCheckAt = now + backoffMs`, so no more phôi are bought during the cooldown. The consecutive-failure counter lives in the controller and resets whenever a run shows real phôi consumption. Threshold: `MAX_CONSECUTIVE_UPGRADE_FAILURES = 3`; backoff: 60 s → 120 s → 240 s … capped at 15 min.
 
 The controller then calls `checkInventoryIcons` again and applies `decideInventoryAction`:
 
@@ -389,13 +406,13 @@ A `/stopagent` while idle does **not** discover or stop upgrade workers; the con
 
 | Key | Effective | Effect |
 |---|---|---|
-| `upgrade.targetGrade` | 7 | Target card grade; also the combobox label |
-| `upgrade.ovrPhoi` | `"118"` | Allowed phôi OVR list/range |
-| `upgrade.maxPriceEach` | `"2M"` | Max price written to every phôi price input |
+| `upgrade.targetGrade` | 7 | Target card grade; validated to `2..13` (mini-app combobox range) |
+| `upgrade.ovrPhoi` | `"115-120"` | Allowed phôi OVR list/range (base OVR + grade, **not** the boosted TTCN OVR). Spaces around `,` and `-` are stripped (`" 115, 118-120 "` → `"115,118-120"`) before validation and before being typed into the mini-app. Syntax-checked only; the range is the user's own choice, with no default, coverage warning, or automatic widening |
+| `upgrade.maxPriceEach` | `"2M"` | Max price written to every phôi price input. A decimal comma with a K/M/B suffix is normalized to a dot (`"2,5M"` → `"2.5M"`) so `parseMarketPrice()` cannot read it as `25M`; a plain `"625,000"` keeps its thousands separator |
 | `upgrade.waitMs` | 5000 | Delay between upgrades |
 | `upgrade.minRatio` | 74 | Minimum success ratio |
 | `upgrade.bpProtectFromGrade` | 8 | BP Protection is enabled only when target grade ≥ this |
-| `upgrade.maxUpgradeWaitMinutes` | 180 | Hard cap on a single run |
+| `upgrade.maxUpgradeWaitMinutes` | 180 | Hard cap on a single run; on expiry the agent recovers instead of stopping |
 | `upgrade.targetCheckDelaySeconds` | 60 | Delay before the first mini-app target check |
 | `upgrade.targetCheckIntervalSeconds` | 120 | Interval between target checks and exhaustion re-confirmation |
 | `upgradeFrameTimeoutSeconds` | 30 | Frame readiness timeout |
@@ -412,8 +429,11 @@ Derived behavior with this config: BP Protection is **OFF** because `7 >= 8` is 
 | `UPGRADE_MODE_LOAD_TIMEOUT` with no cards | Converted to `NO_UPGRADE_TARGETS`, then `no-targets` |
 | `MINI_APP_LOAD_TIMEOUT` / `MINI_APP_UI_NOT_READY` / `MINI_APP_BLANK` | `getUpgradeFrame` retries once; then controller reopens Telegram session (up to 2 attempts) |
 | `NO_UPGRADE_TARGETS` | `runSingleUpgrade` returns `{ action: "no-targets" }` |
-| `NO_UPGRADE_MATERIALS` | `runSingleUpgrade` returns `{ action: "no-materials" }` |
-| `BOT_SYSTEM_ERROR` | `settleUpgradeOutcome` returns `idle` |
+| `NO_UPGRADE_MATERIALS` | `runSingleUpgrade` returns `{ action: "no-materials", consumed: false }` |
+| `UPGRADE_START_BUTTON_MISSING` | Distinct UI/render error → `upgrade-start-failed`; never treated as "out of phôi" |
+| `UPGRADE_UI_MISMATCH` | Final confirmation UI disagrees with config → `upgrade-ui-mismatch`; start is never clicked |
+| `upgrade-timeout` | Returned as a status (not thrown); agent rechecks ICON inventory after a short cooldown |
+| `BOT_SYSTEM_ERROR` | `settleUpgradeOutcome` returns `system-error`; controller defers only upgrade for 10 min |
 | `INVENTORY_READ_UNCONFIRMED` | Only raised by `checkInventoryIcons` during the controller's inventory gate; treated as transient |
 | `/stopnc` timeout | Plain error → controller generic recovery prompt |
 
@@ -421,9 +441,9 @@ Derived behavior with this config: BP Protection is **OFF** because `7 >= 8` is 
 
 - A target must carry an ICON season badge, must not be locked/disabled, and must be below `targetGrade`.
 - Target IDs that fail to make progress or lack phôi are blacklisted only for the current phase.
-- Selected phôi OVRs are checked against `upgrade.ovrPhoi` after filtering; mismatches abort before start.
+- Selected phôi OVRs are read from cards inside `#materialsList` only and checked against `upgrade.ovrPhoi` after filtering; mismatches abort before start. The OVR distribution of the selection is logged. Any selected card carrying an ICON badge also aborts before start.
 - Target exhaustion is never concluded from an empty read alone: reload must be observed, search filters must be empty, no error banner may be shown, no card may be locked, and two checks must agree.
 - Reopening the mini-app for a target check never sends `/tn`; it uses a menu already present in chat.
-- The final confirmation screen is intentionally not compared after "Kiểm tra & Bắt đầu"; the code only requires the start button to exist and be enabled.
+- The final confirmation screen is compared against `targetGrade`, `minRatio`, phôi count and BP Protection before start; any mismatch aborts without pressing start.
 - Every upgrade run closes the mini-app afterward, including successful runs.
 - `/stopnc` is sent only when a stop was requested; no upgrade terminal is fabricated.

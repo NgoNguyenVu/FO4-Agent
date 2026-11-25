@@ -49,7 +49,8 @@ const {
   isUpgradeTargetListExhausted,
   summarizeUpgradeTargetCards,
   shouldProtectBp,
-  parseSelectedPhoiOvrs,
+  verifyUpgradeFinalUi,
+  isIconCard,
   hasRecentUpgradeMenu,
   hasFreshUpgradeMenu
 } = require("./patterns");
@@ -775,25 +776,52 @@ async function selectUpgradeTarget(frame, page, target) {
 }
 
 async function readSelectedMaterialState(frame) {
-  return frame.locator("body").evaluate((body) => {
-    const buttons = [...body.querySelectorAll("#materialsList button, button")];
-    const selected = buttons.filter((button) => {
-      const text = (button.innerText || "").replace(/\s+/g, " ").trim();
-      const state = [
-        text,
-        button.getAttribute("aria-label") || "",
-        button.className || ""
-      ].join(" ");
-      return /ĐÃ\s+CHỌN/i.test(state) || /\bselected\b/i.test(state);
-    });
-    return {
-      count: selected.length,
-      ovrs: selected
-        .map((button) => (button.innerText || "").match(/OVR\s*(\d+)/i))
-        .filter(Boolean)
-        .map((match) => Number(match[1]))
-    };
-  }).catch(() => ({ count: 0, ovrs: [] }));
+  const selected = await frame
+    .locator("body")
+    .evaluate((body) => {
+      // Chỉ đọc thẻ phôi trong #materialsList. Trước đây selector
+      // "#materialsList button, button" quét cả thẻ target đang chọn: thẻ đó có
+      // class "selected"/"ĐÃ CHỌN" nên bị đếm thành 1 phôi, khiến bộ lọc rỗng
+      // trông như đã chọn 1 phôi và đi tiếp tới bước bấm bắt đầu (rồi thất bại).
+      const materialsRoot = body.querySelector("#materialsList");
+      const buttons = materialsRoot
+        ? [...materialsRoot.querySelectorAll("button")]
+        : [...body.querySelectorAll("button")].filter(
+            (button) => !button.closest("#targetsList")
+          );
+      return buttons
+        .filter((button) => {
+          const text = (button.innerText || "").replace(/\s+/g, " ").trim();
+          const state = [
+            text,
+            button.getAttribute("aria-label") || "",
+            button.className || ""
+          ].join(" ");
+          return /ĐÃ\s+CHỌN/i.test(state) || /\bselected\b/i.test(state);
+        })
+        .map((button) => ({
+          text: (button.innerText || "").replace(/\s+/g, " ").trim(),
+          imgSrcs: [...button.querySelectorAll("img")]
+            .map((img) => img.getAttribute("src") || "")
+            .filter(Boolean),
+          seasonText:
+            typeof button.querySelector === "function"
+              ? button.querySelector(".season-text")?.textContent || ""
+              : ""
+        }));
+    })
+    .catch(() => []);
+  // Nhận diện ICON bằng CÙNG helper với bước kiểm tra kho/target list.
+  const iconCards = selected.filter(isIconCard);
+  return {
+    count: selected.length,
+    ovrs: selected
+      .map((card) => card.text.match(/OVR\s*(\d+)/i))
+      .filter(Boolean)
+      .map((match) => Number(match[1])),
+    iconCount: iconCards.length,
+    iconNames: iconCards.map((card) => card.text.slice(0, 80))
+  };
 }
 
 function parseLatestSelectedMaterialCount(text) {
@@ -801,76 +829,122 @@ function parseLatestSelectedMaterialCount(text) {
   return matches.length ? Number(matches[matches.length - 1][1]) : null;
 }
 
-async function filterUpgradePhoi(frame, page, allowedOvrs, filterSpec = null) {
-  let text = "";
-  let m = null;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    await ensureUpgradeFilterInputs(frame, page, filterSpec);
-    const loc = frame.getByText(UG_FILTER_BUTTON_TEXT, { exact: false });
-    let clicked = false;
-    for (let i = 0; i < (await loc.count().catch(() => 0)); i += 1) {
-      try {
-        if (await loc.nth(i).isVisible()) {
-          await loc.nth(i).click({ timeout: 6000 });
-          clicked = true;
-          break;
-        }
-      } catch { /* mục tiếp theo */ }
-    }
-    if (!clicked) throw new Error("Không bấm được nút lọc phôi từ kho.");
-    const selectedDeadline = Date.now() + 15_000;
-    const loader = frame.locator("#loader");
-    let loading = await loader.isVisible().catch(() => false);
-    while (loading && Date.now() < selectedDeadline) {
-      await page.waitForTimeout(250);
-      loading = await loader.isVisible().catch(() => false);
-    }
-    await page.waitForTimeout(2_500);
-    while (Date.now() < selectedDeadline) {
-      try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
-      const selectedCount = parseLatestSelectedMaterialCount(text);
-      const selectedState = await readSelectedMaterialState(frame);
-      if (selectedState.count > 0) {
-        m = [null, String(selectedState.count)];
+function formatOvrDistribution(ovrs) {
+  if (!ovrs.length) return "không đọc được";
+  const counts = new Map();
+  for (const ovr of ovrs) counts.set(ovr, (counts.get(ovr) || 0) + 1);
+  return [...counts.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ovr, count]) => `${ovr}:${count}`)
+    .join(", ");
+}
+
+async function readAvailableMaterialState(frame) {
+  return frame
+    .locator("body")
+    .evaluate((body) => {
+      const root = body.querySelector("#materialsList");
+      const chip = body.querySelector("#mlistCount");
+      const buttons = root ? [...root.querySelectorAll("button")] : [];
+      const ovrs = buttons
+        .map((button) => (button.innerText || "").match(/OVR\s*(\d+)/i))
+        .filter(Boolean)
+        .map((match) => Number(match[1]));
+      return {
+        // null = mini-app chưa render danh sách phôi (không được hiểu là hết phôi).
+        count: root ? buttons.length : null,
+        chip: chip
+          ? (chip.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160)
+          : "",
+        ovrs
+      };
+    })
+    .catch(() => ({ count: null, chip: "", ovrs: [] }));
+}
+
+async function clickFilterAndWait(frame, page) {
+  const loc = frame.getByText(UG_FILTER_BUTTON_TEXT, { exact: false });
+  let clicked = false;
+  for (let i = 0; i < (await loc.count().catch(() => 0)); i += 1) {
+    try {
+      if (await loc.nth(i).isVisible()) {
+        await loc.nth(i).click({ timeout: 6000 });
+        clicked = true;
         break;
       }
-      if (selectedCount !== null && !loading) {
-        await page.waitForTimeout(750);
-        try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
-        const settledCount = parseLatestSelectedMaterialCount(text);
-        const settledState = await readSelectedMaterialState(frame);
-        if (settledState.count > 0) {
-          m = [null, String(settledState.count)];
-          break;
-        }
-        if (settledCount !== null) m = [null, String(settledCount)];
-      }
-      await page.waitForTimeout(500);
-      loading = await loader.isVisible().catch(() => false);
+    } catch { /* mục tiếp theo */ }
+  }
+  if (!clicked) throw new Error("Không bấm được nút lọc phôi từ kho.");
+  const deadline = Date.now() + 15_000;
+  const loader = frame.locator("#loader");
+  let loading = await loader.isVisible().catch(() => false);
+  while (loading && Date.now() < deadline) {
+    await page.waitForTimeout(250);
+    loading = await loader.isVisible().catch(() => false);
+  }
+  await page.waitForTimeout(2_500);
+  while (Date.now() < deadline) {
+    let text = "";
+    try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
+    const textCount = parseLatestSelectedMaterialCount(text);
+    const state = await readSelectedMaterialState(frame);
+    if (state.count > 0) return state.count;
+    if (textCount !== null && !loading) {
+      await page.waitForTimeout(750);
+      try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
+      const settledCount = parseLatestSelectedMaterialCount(text);
+      const settledState = await readSelectedMaterialState(frame);
+      if (settledState.count > 0) return settledState.count;
+      if (settledCount !== null) return Number(settledCount);
     }
-    if (m && Number(m[1]) > 0) break;
+    await page.waitForTimeout(500);
+    loading = await loader.isVisible().catch(() => false);
+  }
+  return 0;
+}
+
+async function filterUpgradePhoi(frame, page, allowedOvrs, filterSpec = null) {
+  const available = await readAvailableMaterialState(frame);
+  log(
+    `Kho mini-app trước khi lọc: ` +
+      `${available.count == null ? "chưa đọc được" : `${available.count} phôi`}` +
+      `${available.chip ? ` (${available.chip})` : ""}` +
+      `; OVR trong kho: ${formatOvrDistribution(available.ovrs)}.`
+  );
+  let count = 0;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    // Chỉ lọc theo đúng dải OVR đã setup trong config; KHÔNG tự sinh dải khác.
+    await ensureUpgradeFilterInputs(frame, page, filterSpec);
+    count = await clickFilterAndWait(frame, page);
+    if (count > 0) break;
     if (attempt === 1) {
       log("Bộ lọc phôi chưa đánh dấu được thẻ hợp lệ; thử lọc lại một lần.");
       continue;
     }
     break;
   }
-  const count = m ? Number(m[1]) : 0;
   if (count < 1) {
     log(
-      `Mini-app không chọn được phôi sau khi lọc (OVR ${allowedOvrs.join(",")}).`
+      `Mini-app không chọn được phôi sau khi lọc (OVR ${allowedOvrs.join(",")}); ` +
+        `số phôi đang có trong kho trước khi lọc: ${available.count == null ? "không rõ" : available.count}.`
     );
     const error = new Error("Lọc phôi xong nhưng chưa có phôi nào được chọn.");
     error.code = "NO_UPGRADE_MATERIALS";
+    error.availableCount = available.count;
+    error.availableOvrs = available.ovrs;
     throw error;
   }
-  const cardTexts = await frame.locator("body").evaluate((body) => {
-    const doc = body.ownerDocument;
-    return [...doc.querySelectorAll("button")].map((b) =>
-      (b.innerText || "").replace(/\s+/g, " ").trim().slice(0, 200)
+  // Đọc lại đúng thẻ phôi trong #materialsList: thẻ target đang chọn cũng có
+  // "ĐÃ CHỌN"/selected nên quét toàn trang sẽ đối chiếu nhầm OVR của target.
+  const selectedState = await readSelectedMaterialState(frame);
+  const selectedOvrs = selectedState.ovrs || [];
+  if (selectedState.iconCount > 0) {
+    throw new Error(
+      `Bộ lọc đã chọn ${selectedState.iconCount} cầu thủ ICON làm phôi ` +
+        `(${selectedState.iconNames.slice(0, 3).join(" | ")}). Dừng trước khi ` +
+        "start để không mất ICON; hạ upgrade.maxPriceEach hoặc thu hẹp upgrade.ovrPhoi."
     );
-  }).catch(() => []);
-  const selectedOvrs = parseSelectedPhoiOvrs(cardTexts);
+  }
   const allowed = new Set(allowedOvrs);
   const offenders = selectedOvrs.filter((ovr) => !allowed.has(ovr));
   if (offenders.length) {
@@ -878,7 +952,16 @@ async function filterUpgradePhoi(frame, page, allowedOvrs, filterSpec = null) {
       `Phôi đã chọn sai OVR cho phép (${[...allowed].join(",")}): ${offenders.join(",")}.`
     );
   }
-  log(`Bot đã chọn ${count} phôi từ kho (OVR khớp spec).`);
+  log(
+    `Bot đã chọn ${count} phôi từ kho ` +
+      `(trong ${available.count == null ? "?" : available.count} phôi hợp lệ; OVR ${formatOvrDistribution(selectedOvrs)}).`
+  );
+  if (count < 5) {
+    log(
+      `Chỉ ${count} phôi khớp bộ lọc upgrade.ovrPhoi; mini-app lọc theo actual OVR ` +
+        "(base OVR + grade, chưa cộng OVR boost)."
+    );
+  }
   return count;
 }
 
@@ -899,30 +982,62 @@ async function checkUpgradeAndStart(frame, page, spec, phoiCount) {
   await page.waitForTimeout(4000);
   let text = "";
   try { text = await frame.locator("body").innerText({ timeout: 8000 }); } catch { text = ""; }
+  // Chốt chặn cuối trước khi bấm start: nếu bot/app re-render làm sai target,
+  // tỉ lệ, số phôi hoặc trạng thái bảo vệ BP thì TUYỆT ĐỐI không start nâng.
+  // Lỗi này không phải "hết phôi" nên caller phải đóng mini-app, backoff rồi
+  // thử lại an toàn thay vì đi mua thêm phôi (tránh đốt BP oan).
+  try {
+    verifyUpgradeFinalUi(text, spec, phoiCount);
+  } catch (error) {
+    const mismatch = new Error(
+      `UI kiểm tra nâng cấp sai cấu hình, không bấm start: ${error.message}`
+    );
+    mismatch.code = "UPGRADE_UI_MISMATCH";
+    throw mismatch;
+  }
   log(
-    `Đã gửi kiểm tra nâng cấp với ${phoiCount} phôi đã lọc; ` +
-      "bỏ qua đối chiếu lại UI cuối vì mini-app có thể khóa/đánh dấu lại các thẻ."
+    `Đã đối chiếu UI kiểm tra nâng cấp với cấu hình ` +
+      `(target +${spec.targetGrade}, tỉ lệ ${spec.minRatio}%, ${phoiCount} phôi, ` +
+      `bảo vệ BP ${shouldProtectBp(spec.targetGrade, spec.bpProtectFromGrade) ? "BẬT" : "TẮT"}); ` +
+      "tiếp tục bấm bắt đầu nâng cấp."
   );
   return text;
 }
 
-async function pressUpgradeStart(frame) {
+async function pressUpgradeStart(frame, phoiCount = null) {
   const buttons = frame.getByRole("button");
+  const related = [];
   for (let i = 0; i < (await buttons.count().catch(() => 0)); i += 1) {
     let text = "";
     try {
       text = (await buttons.nth(i).innerText()).replace(/\s+/g, " ").trim();
     } catch { continue; }
+    if (/nâng\s*cấp/i.test(text)) related.push(text);
     if (text === UG_FINAL_START_TEXT && (await buttons.nth(i).isVisible()) && (await buttons.nth(i).isEnabled())) {
       await buttons.nth(i).click({ timeout: 8000 });
       log("Đã bấm bắt đầu nâng cấp.");
       return;
     }
   }
-  const error = new Error(
-    "Mini-app không tạo được nút bắt đầu nâng cấp sau khi lọc phôi."
+  // Không có nút bắt đầu thường vì app không nhận phôi hợp lệ (hết phôi trong
+  // dải OVR, hoặc bộ lọc chỉ đếm nhầm thẻ target). Ghi lại UI cuối để lần sau
+  // phân biệt được "hết phôi thật" với "app lỗi/không render nút".
+  const uiText = await frame
+    .locator("body")
+    .innerText({ timeout: 5_000 })
+    .catch(() => "");
+  const uiTail = String(uiText || "").replace(/\s+/g, " ").trim().slice(-300);
+  const countLabel = phoiCount == null ? "không rõ" : String(phoiCount);
+  log(
+    `Không thấy nút "${UG_FINAL_START_TEXT}" sau khi chọn ${countLabel} phôi. ` +
+      `Nút liên quan nâng cấp: ${related.length ? related.slice(0, 5).join(" | ") : "không có"}. ` +
+      `UI cuối: ${uiTail || "(rỗng)"}`
   );
-  error.code = "NO_UPGRADE_MATERIALS";
+  const error = new Error(
+    `Mini-app không tạo được nút bắt đầu nâng cấp sau khi lọc ${countLabel} phôi ` +
+      `(lỗi render/UI, KHÔNG kết luận là hết phôi).`
+  );
+  error.code = "UPGRADE_START_BUTTON_MISSING";
   throw error;
 }
 
@@ -971,7 +1086,13 @@ async function readUpgradeTargetCards(frame) {
       out.push({
         text: t.slice(0, 160),
         disabled: !!b.disabled,
-        imgSrcs: [...b.querySelectorAll("img")].map((img) => img.src || "")
+        imgSrcs: [...b.querySelectorAll("img")].map((img) => img.src || ""),
+        // Dùng chung với readSelectedMaterialState/isIconCard: một số mùa chỉ
+        // ghi chữ ICON ở đây thay vì badge trong img src.
+        seasonText:
+          typeof b.querySelector === "function"
+            ? b.querySelector(".season-text")?.textContent || ""
+            : ""
       });
     }
     return out;

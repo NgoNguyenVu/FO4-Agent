@@ -4,7 +4,8 @@ const { withTimeout } = require("../lib/playwright-utils");
 const { PLAYWRIGHT_TIMEOUT_MS } = require("../lib/bot-patterns");
 const {
   chatTextReaders,
-  waitForChatChange
+  waitForChatChange,
+  reattachChatObserver
 } = require("../lib/chat-runtime");
 const {
   BOT_URL,
@@ -17,6 +18,16 @@ const {
   setWaitingForLoginPrompt
 } = require("./interactive-prompt");
 const { log } = require("./agent-log");
+
+// page.goto() có thể tạo document mới và làm mất MutationObserver. Gắn lại
+// ngay sau navigation để không nuốt /stopagent, /resetagent.
+async function reattachAfterNavigation(page) {
+  try {
+    await reattachChatObserver(page);
+  } catch (error) {
+    log(`Không gắn lại được theo dõi chat sau khi điều hướng: ${error.message}`);
+  }
+}
 
 async function getMessageComposer(page) {
   const selectors = [
@@ -74,6 +85,7 @@ async function ensureMessageComposer(page, rl) {
   if (!composer) {
     log("Không thấy ô nhập tin nhắn; tải lại trang Telegram một lần và chờ thêm...");
     await page.goto(BOT_URL, { waitUntil: "domcontentloaded" });
+    await reattachAfterNavigation(page);
     await dismissTelegramTips(page);
     composer = await waitForMessageComposer(page, 15_000);
     if (!composer) {
@@ -93,6 +105,7 @@ async function ensureMessageComposer(page, rl) {
       setWaitingForLoginPrompt(false);
     }
     await page.goto(BOT_URL, { waitUntil: "domcontentloaded" });
+    await reattachAfterNavigation(page);
     await dismissTelegramTips(page);
     composer = await waitForMessageComposer(page, 30_000);
     if (!composer) {

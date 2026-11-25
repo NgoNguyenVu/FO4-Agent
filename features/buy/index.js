@@ -6,12 +6,10 @@ const patterns = require("./patterns");
 const cycle = require("./cycle");
 const miniApp = require("./mini-app");
 const outcome = require("./outcome");
-const menu = require("./menu");
 
 module.exports = {
   ...patterns,
   ...cycle,
   ...miniApp,
-  ...outcome,
-  buyMenu: menu
+  ...outcome
 };

@@ -13,6 +13,8 @@
 const { compareLogFiles, parseTimeValue } = require("../lib/log-comparison");
 const { logPath } = require("../lib/log-paths");
 const { resolveChatLogPath } = require("../lib/telegram-chat-log");
+const os = require("node:os");
+const path = require("node:path");
 
 function parseArgs(argv) {
   const options = {
@@ -35,6 +37,15 @@ function parseArgs(argv) {
     else throw new Error(`Tham số không hợp lệ: ${arg}`);
   }
   return options;
+}
+
+function displayLogPath(filePath) {
+  const value = String(filePath || "");
+  const local = path.join(process.env.LOCALAPPDATA || os.homedir(), "FO4PurchaseAgent");
+  if (value.startsWith(local)) return value.replace(local, "%LOCALAPPDATA%\\FO4PurchaseAgent");
+  const home = os.homedir();
+  if (home && value.startsWith(home)) return value.replace(home, "%USERPROFILE%");
+  return value;
 }
 
 function formatMs(value) {
@@ -120,8 +131,8 @@ function formatIconStats(report) {
 }
 
 function printReport(report) {
-  console.log(`Agent log : ${report.agentLogPath}`);
-  console.log(`Chat log  : ${report.chatLogPath}`);
+  console.log(`Agent log : ${displayLogPath(report.agentLogPath)}`);
+  console.log(`Chat log  : ${displayLogPath(report.chatLogPath)}`);
   console.log("");
   if (!report.commands.length) {
     console.log("Chưa có lệnh điều khiển nào trong telegram-chat.log.");
@@ -188,6 +199,7 @@ if (require.main === module) main();
 
 module.exports = {
   parseArgs,
+  displayLogPath,
   formatMs,
   formatUtcTimestamp,
   describeRange,

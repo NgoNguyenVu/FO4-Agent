@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   getUpgradeSpec,
   validateUpgradeConfig,
@@ -38,11 +40,14 @@ const {
   isManualUpgradeModeText,
   expandUpgradeAdvanced,
   findNcMenuButton,
+  isIconCard,
   hasRecentUpgradeMenu,
   hasFreshUpgradeMenu,
   settleUpgradeOutcome,
   decideMasterUpgradePhase,
-  pivotMasterToUpgrade
+  pivotMasterToUpgrade,
+  checkUpgradeAndStart,
+  pressUpgradeStart
 } = require("./upgrade");
 const {
   chatTextReaders,
@@ -58,7 +63,34 @@ test("parses market prices with K/M/B suffixes and separators", () => {
   assert.equal(parseMarketPrice("1,600"), 1600);
   assert.equal(parseMarketPrice("50000000"), 50000000);
   assert.equal(parseMarketPrice("6.5M"), 6500000);
+  // Dấu phẩy là thập phân khi có hậu tố K/M/B (không được đọc thành 25M).
+  assert.equal(parseMarketPrice("2,5M"), 2500000);
+  assert.equal(parseMarketPrice("2.5M"), 2500000);
+  assert.equal(parseMarketPrice("1,5K"), 1500);
   assert.throws(() => parseMarketPrice("并无"), /Không đọc được giá/);
+});
+
+test("ICON detection is shared by target list and selected phôi cards", () => {
+  const badge = "https://x/season/ICON.png";
+  const normal = "https://x/season/TOTS.png";
+  assert.equal(isIconCard({ imgSrcs: [badge] }), true);
+  assert.equal(isIconCard({ imgSrcs: [normal], seasonText: "ICON TM" }), true);
+  assert.equal(isIconCard({ imgSrcs: [normal], seasonText: "TOTS" }), false);
+  assert.equal(isIconCard({}), false);
+
+  // Cùng một thẻ chỉ có .season-text=ICON phải được tính là target hợp lệ ở
+  // bước kiểm tra kho (trước đây chỉ đọc img src nên bỏ sót).
+  const cards = [
+    {
+      text: "A _id: aaa111 • +2 • Giá 10M",
+      disabled: false,
+      imgSrcs: [normal],
+      seasonText: "ICON"
+    },
+    { text: "B _id: bbb222 • +2 • Giá 10M", disabled: false, imgSrcs: [normal] }
+  ];
+  const candidates = parseUpgradeTargetCards(cards, 7);
+  assert.deepEqual(candidates.map((c) => c.id), ["aaa111"]);
 });
 
 test("enables BP protection only from grade +8", () => {
@@ -257,6 +289,26 @@ test("parses the terminal upgrade summary with final grade and reason", () => {
     reachedTarget: false
   });
   assert.equal(parseUpgradeSummary("still running"), null);
+});
+
+test("reads materialsRemaining when the progress line comes before the summary", () => {
+  // Thứ tự thật của bot: mỗi lần nâng xong in "Số lượng nguyên liệu còn: N",
+  // cuối cùng mới in "Nâng ... X/Y target". Chỉ đọc progress sau dòng summary
+  // làm materialsRemaining luôn null và consumedCount luôn 0.
+  const chat =
+    "Đã khởi động Auto Nâng Cấp (thủ công).\n" +
+    "Nếu gặp lỗi gõ /stopnc để dừng nâng cấp.\n" +
+    "Kết quả nâng cấp:\n" +
+    "- Nâng tất cả target lên grade 7\n" +
+    "- ID Cầu thủ abc: 6→7 | m=0 | 119:1 120:1 | raw=84.9%\n" +
+    "- ID Cầu thủ abc: Nâng thành công lên Mức thẻ 7 (Số lượng nguyên liệu còn: 0)\n" +
+    "Kết quả nâng cấp:\n" +
+    "- Nâng thành công 1/1 target.\n" +
+    "Cầu thủ ID abc: Mức thẻ cuối 7\n" +
+    "Dừng do đạt mục tiêu.";
+  const summary = parseUpgradeSummary(chat);
+  assert.equal(summary.materialsRemaining, 0);
+  assert.equal(summary.reachedTarget, true);
 });
 
 test("a reached-target summary carries its reason for the loop", () => {
@@ -695,6 +747,75 @@ test("final check UI accepts Telegram mini-app spacing variants", () => {
   assert.doesNotThrow(() => verifyUpgradeFinalUi(text, spec, 1));
 });
 
+test("final UI mismatch aborts before any start click", async () => {
+  const spec = { targetGrade: 6, minRatio: 100, bpProtectFromGrade: 8 };
+  const badUi =
+    "Số target: 1\nSố phôi đã chọn: 8\nMục tiêu: +6\n" +
+    "Tỉ lệ tối thiểu: 100%\nBảo vệ BP: BẬT";
+  let checked = 0;
+  const frame = {
+    getByText: () => ({
+      count: async () => 1,
+      nth: () => ({
+        innerText: async () => "Kiểm tra & Bắt đầu",
+        isVisible: async () => true,
+        click: async () => {
+          checked += 1;
+        }
+      })
+    }),
+    locator: () => ({ innerText: async () => badUi })
+  };
+  const page = { waitForTimeout: async () => {} };
+  await assert.rejects(
+    () => checkUpgradeAndStart(frame, page, spec, 8),
+    (error) => {
+      assert.equal(error.code, "UPGRADE_UI_MISMATCH");
+      assert.match(error.message, /không bấm start/);
+      return true;
+    }
+  );
+  assert.equal(checked, 1, "the check button was clicked, but start must never be reached");
+  // Runner calls checkUpgradeAndStart before pressUpgradeStart; a mismatch throws.
+  const runnerSrc = fs.readFileSync(path.join(__dirname, "upgrade/runner.js"), "utf8");
+  const checkAt = runnerSrc.indexOf("checkUpgradeAndStart(");
+  const startAt = runnerSrc.indexOf("pressUpgradeStart(");
+  assert.ok(checkAt > 0 && startAt > checkAt);
+});
+
+test("missing start button is a UI error, not NO_UPGRADE_MATERIALS", async () => {
+  const frame = {
+    getByRole: () => ({ count: async () => 0 }),
+    locator: () => ({ innerText: async () => "Không có nút bắt đầu" })
+  };
+  await assert.rejects(
+    () => pressUpgradeStart(frame, 8),
+    (error) => {
+      assert.equal(error.code, "UPGRADE_START_BUTTON_MISSING");
+      assert.match(error.message, /lỗi render\/UI/);
+      return true;
+    }
+  );
+});
+
+test("upgrade timeout is returned as a recovery status instead of thrown", async () => {
+  const settled = await settleUpgradeOutcome(
+    { status: "upgrade-timeout", waitedMinutes: 181 },
+    null,
+    { targetGrade: 7 },
+    null,
+    null
+  );
+  assert.equal(settled.action, "upgrade-timeout");
+  assert.equal(settled.retryInventoryCheck, true);
+  const runnerSrc = fs.readFileSync(path.join(__dirname, "upgrade/runner.js"), "utf8");
+  const at = runnerSrc.indexOf("Date.now() - startedAt > limitMs");
+  assert.ok(at > 0);
+  const branch = runnerSrc.slice(at, at + 900);
+  assert.match(branch, /status: "upgrade-timeout"/);
+  assert.doesNotMatch(branch, /throw new Error/);
+});
+
 test("parses OVR lists in comma and range forms", () => {
   assert.deepEqual(parseOvrList("114,115,116,117"), [114, 115, 116, 117]);
   assert.deepEqual(parseOvrList("112-118"), [112, 113, 114, 115, 116, 117, 118]);
@@ -841,6 +962,8 @@ test("workout outcome falls back to terminal counting when Telegram replaces the
     total: 1,
     finalGrade: 6,
     reason: "đạt mục tiêu",
+    // Compact progress cuối run ("5→6 | m=3") là số phôi còn lại sau lượt này.
+    materialsRemaining: 3,
     outOfMaterial: false,
     reachedTarget: true
   });
@@ -916,6 +1039,9 @@ test("counts the nox nguyen-lieu failure summary as a run terminal", () => {
     total: 1,
     finalGrade: 5,
     reason: "không đủ nguyên liệu hợp lệ",
+    // Progress "còn: 51" nằm giữa terminal cũ và terminal mới (start đã bị
+    // trim) nên thuộc run mới; đọc được để tính phôi đã tiêu thụ.
+    materialsRemaining: 51,
     outOfMaterial: true,
     reachedTarget: false
   });
@@ -956,6 +1082,9 @@ test("detects a new terminal when trimming swaps old and new terminals with the 
     total: 1,
     finalGrade: 2,
     reason: "không có nguyên liệu hợp lệ",
+    // Dòng "còn: 9" của chính run này nằm trước terminal (start đã bị trim):
+    // vẫn phải đọc được để tính số phôi đã tiêu thụ.
+    materialsRemaining: 9,
     outOfMaterial: true,
     reachedTarget: false
   });
@@ -996,7 +1125,7 @@ test("upgrade E006 surfaces a system-error outcome instead of idling", async () 
   // Các action cũ giữ nguyên hợp đồng.
   assert.equal(decideMasterUpgradePhase("continue"), "continue");
   assert.equal(decideMasterUpgradePhase("no-materials"), "buy");
-  assert.equal(decideMasterUpgradePhase("no-progress"), "idle");
+  assert.equal(decideMasterUpgradePhase("no-progress"), "buy");
 });
 
 test("upgrade E006 keeps the agent active and flags a cooldown retry", async () => {

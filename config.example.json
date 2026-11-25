@@ -1,0 +1,42 @@
+{
+  "ovrMin": 118,
+  "ovrMax": 123,
+  "maxPriceBP": 800000,
+  "quantityPerAttempt": 3,
+  "maxPerCycle": 14,
+  "maxCycleWaitMinutes": 240,
+  "botResponseTimeoutMinutes": 5,
+  "menuResponseTimeoutSeconds": 45,
+  "menuBusyRetrySeconds": 15,
+  "upgradeFrameTimeoutSeconds": 30,
+  "upgrade": {
+    "targetGrade": 7,
+    "ovrPhoi": "115-120",
+    "maxPriceEach": "2M",
+    "waitMs": 5000,
+    "minRatio": 74,
+    "bpProtectFromGrade": 8,
+    "maxUpgradeWaitMinutes": 180,
+    "targetCheckDelaySeconds": 60,
+    "targetCheckIntervalSeconds": 120
+  },
+  "iconBuy": {
+    "maxPlayersPerBatch": 3,
+    "grade": 1,
+    "quantity": 1,
+    "cancelPositionAbove": 2,
+    "favoritesTimeoutSeconds": 60,
+    "purchaseTimeoutSeconds": 0,
+    "purchaseSoftTimeoutSeconds": 1800,
+    "monitorWaitSeconds": 900,
+    "inventoryCheckIntervalSeconds": 1800,
+    "ttcnTimeoutSeconds": 60,
+    "batchIntervalSeconds": 2,
+    "continuous": true,
+    "monitorExistingOrders": true,
+    "slotPollSeconds": 15,
+    "maxBatchesPerRun": 1,
+    "captureTtcnBaseline": true,
+    "maxTaskSlots": 3
+  }
+}

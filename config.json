@@ -1,7 +1,7 @@
 {
   "ovrMin": 118,
   "ovrMax": 123,
-  "maxPriceBP": 888888,
+  "maxPriceBP": 800000,
   "quantityPerAttempt": 3,
   "maxPerCycle": 14,
   "maxCycleWaitMinutes": 240,
@@ -11,7 +11,7 @@
   "upgradeFrameTimeoutSeconds": 30,
   "upgrade": {
     "targetGrade": 7,
-    "ovrPhoi": "118,119,120",
+    "ovrPhoi": "115-120",
     "maxPriceEach": "2M",
     "waitMs": 5000,
     "minRatio": 74,
