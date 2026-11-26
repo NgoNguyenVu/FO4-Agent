@@ -44,6 +44,10 @@ OpenCode free, Gemini neu co `GEMINI_API_KEY`); Enter chon model dau tien. Co th
 chi dinh thang bang `--ai-model <id|so>`. Khong co key/model nao thi tu dong dung
 bo thong ke cuc bo (local heuristic), agent van chay binh thuong.
 
+Model `opencode/*` goi `opencode run` bang phien dang nhap san cua OpenCode CLI:
+khong can API key, khong doc `service.json` va khong dong den process lock cua
+agent dang chay. Dat `FO4_OPENCODE_BIN` neu CLI khong nam trong PATH.
+
 Luong [3] doc "Lich su Chi so Random va Muc The Moi", AI de xuat BAIT/MAIN,
 code chat chan 2 lop (same-tier bait + re-read UI truoc khi bam "Nang cap").
 Cau hinh trong `baitUpgrade` (config.json / config.example.json): `main.seasons`,
