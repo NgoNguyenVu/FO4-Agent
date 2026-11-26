@@ -36,7 +36,9 @@ const {
   CONTROL_COMMAND_STATUS_LOG_INTERVAL_MS,
   PLAYWRIGHT_TIMEOUT_MS
 } = require("../lib/bot-patterns");
-const { config, validateConfig } = require("./config");
+const { config, validateConfig, getBaitSpec } = require("./config");
+const { discoverFreeModels } = require("../lib/ai-provider-discovery");
+const { createAiClient } = require("../lib/ai-client");
 const { getLaunchMode, getDefaultLaunchMode } = require("../lib/launch-modes");
 const { log, logError } = require("./agent-log");
 const { createUiLock } = require("../lib/ui-lock");
@@ -92,6 +94,7 @@ const {
 } = require("./upgrade");
 const { runIconBuy } = require("./icon-buy");
 const { iconReceivePivotPlan } = require("./upgrade/receive-pivot");
+const { runBaitRound } = require("./bait-upgrade");
 
 async function restoreTelegramSession(context, page, rl, onCommand) {
   ({ context, page } = await openTelegramPage(context, page));
@@ -107,11 +110,23 @@ async function restoreTelegramSession(context, page, rl, onCommand) {
   return { context, page, reader };
 }
 
-async function main({ launchMode } = {}) {
+async function main({ launchMode, aiModelId = null } = {}) {
   const resolvedMode = getLaunchMode(launchMode) || getDefaultLaunchMode();
   const enabledFeatures = new Set(resolvedMode.features);
   const iconEnabled = enabledFeatures.has("icon-buy");
   const buyUpgradeEnabled = enabledFeatures.has("buy-upgrade");
+  const baitEnabled = enabledFeatures.has("bait-upgrade");
+  const baitSpec = getBaitSpec();
+  const models = await discoverFreeModels({
+    onError: (message) => log(`Discovery AI: ${message}`)
+  });
+  const aiClient = createAiClient({
+    models,
+    selectedId: aiModelId || models[0]?.id || null,
+    timeoutMs: Number(baitSpec.ai?.timeoutMs || 15_000),
+    maxRetries: Number(baitSpec.ai?.maxRetries ?? 2),
+    log
+  });
   log(
     `Launch mode [${resolvedMode.id}] ${resolvedMode.key}; ` +
       `features: ${resolvedMode.features.join(", ")}.`
@@ -126,7 +141,7 @@ async function main({ launchMode } = {}) {
   // dùng đã /stopagent rồi mới reset thì giữ nguyên trạng thái nghỉ.
   let autoResumeAfterReset = false;
   let agentActive = false;
-  let mode = null; // null=idle; "master"=buy-upgrade; "icon-only"=chỉ ICON
+  let mode = null; // null=idle; "master"=buy-upgrade; "icon-only"=ICON; "bait-upgrade"=thủ công
   let sessionUnavailable = false;
   let nextMenuAttemptAt = 0;
   // Khi bot chưa trả menu, giãn dần khoảng thử lại để không gửi /tn dồn dập.
@@ -197,9 +212,11 @@ async function main({ launchMode } = {}) {
           : "Nhận /startagent; ";
     log(
       prefix +
-        (buyUpgradeEnabled
-          ? "giữ tối đa 3 task ICON chạy liên tục, có ICON trong kho thì mua phôi và nâng."
-          : "chỉ giữ tối đa 3 task ICON chạy liên tục, không mua phôi/nâng.")
+        (baitEnabled
+          ? "chỉ chạy nhịp nâng thủ công BAIT/MAIN, AI đọc cầu và code chốt an toàn."
+          : buyUpgradeEnabled
+            ? "giữ tối đa 3 task ICON chạy liên tục, có ICON trong kho thì mua phôi và nâng."
+            : "chỉ giữ tối đa 3 task ICON chạy liên tục, không mua phôi/nâng.")
     );
   };
 
@@ -806,6 +823,36 @@ async function main({ launchMode } = {}) {
           continue;
         }
         log(`Lệnh lạ ${command}; bỏ qua, tiếp tục chờ.`);
+        continue;
+      }
+
+      // --- ACTIVE: bait-upgrade (Mode [3]) ---
+      if (baitEnabled) {
+        if (reader.takeCommand("stopagent")) {
+          agentActive = false;
+          log("Nhận /stopagent; đã dừng nhịp nâng thủ công, chờ lệnh mới.");
+          continue;
+        }
+        try {
+          const result = await runBaitRound({
+            page,
+            rl,
+            ui,
+            spec: baitSpec,
+            aiClient
+          });
+          if (result?.action === "hold") {
+            log(`BAIT/HOLD: ${result.reason}; không bấm Nâng cấp.`);
+          } else if (result?.action === "upgraded") {
+            log(
+              `Đã nâng nhịp ${result.decision.decision}; ` +
+                `kết quả ${result.outcome.status}.`
+            );
+          }
+        } catch (error) {
+          logError(`Lỗi nhịp bait-upgrade: ${error.stack || error.message}`);
+        }
+        await page.waitForTimeout(Number(baitSpec.timing?.cooldownMs || 3000));
         continue;
       }
 

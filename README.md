@@ -27,6 +27,7 @@ Khi mo CMD truc tiep (`start-agent.cmd` hoac `npm start`), agent hien menu:
 Chon che do khoi chay:
   [1] San ICON + Mua phoi & Nang +7 (mac dinh)
   [2] Chi san dat mua ICON
+  [3] Nang thu cong tung nhip (BAIT/MAIN + AI)
 Nhan Enter de chon mac dinh.
 ```
 
@@ -38,12 +39,24 @@ mode do (log: `Agent READY` -> `Tu dong bat dau chay che do [1]/[2]...`), KHONG
 can go `/startagent` them lan nua. `/stopagent` de tam dung, `/startagent` de
 chay lai, `/resetagent` de khoi phuc phien (va tu chay lai neu truoc do dang chay).
 
+Khi chon [3], agent hien them menu chon model AI free (OpenRouter `:free`,
+OpenCode free, Gemini neu co `GEMINI_API_KEY`); Enter chon model dau tien. Co the
+chi dinh thang bang `--ai-model <id|so>`. Khong co key/model nao thi tu dong dung
+bo thong ke cuc bo (local heuristic), agent van chay binh thuong.
+
+Luong [3] doc "Lich su Chi so Random va Muc The Moi", AI de xuat BAIT/MAIN,
+code chat chan 2 lop (same-tier bait + re-read UI truoc khi bam "Nang cap").
+Cau hinh trong `baitUpgrade` (config.json / config.example.json): `main.seasons`,
+`bait.seasons`, `minFillRatio` (mac dinh 0.92 cuatran ti le cua b cac cap),
+`safety`, `market.minLiquidity`.
+
 Bo qua phan hoi phim bang co `--mode`:
 
 ```powershell
 node agent.js --mode icon-only
 npm start -- --mode icon-combo
 start-agent.cmd --mode icon-only
+node agent.js --mode bait-upgrade --ai-model openrouter/inclusionai/ling-3.2-flash:free
 ```
 
 Lenh dieu khien trong chat bot chi tac dong den module cua mode dang chay;

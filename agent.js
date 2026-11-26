@@ -4,7 +4,7 @@ const { config } = require("./features/config");
 const { dataDir, log, logError } = require("./features/agent-log");
 const { getLifecycle } = require("./lib/lifecycle");
 const { getWorkerRegistry } = require("./lib/worker-registry");
-const { resolveLaunchMode } = require("./lib/launch-cli");
+const { resolveLaunchMode, resolveAiModel } = require("./lib/launch-cli");
 
 // `runAgent()` chạy vòng điều khiển nội bộ (main) và tự xử lý mọi lỗi có thể
 // phục hồi (E006, mất session, timeout...) ngay trong vòng lặp của nó. Vì vậy nó
@@ -60,6 +60,20 @@ async function main() {
   }
   log(`Chế độ khởi chạy: [${launchMode.id}] ${launchMode.key} — ${launchMode.label}`);
 
+  let aiModel = null;
+  try {
+    const selected = await resolveAiModel({ argv: process.argv.slice(2), mode: launchMode });
+    aiModel = selected.model;
+    if (aiModel) log(`AI model: ${aiModel.id}`);
+    else if ((launchMode.features || []).includes("bait-upgrade")) {
+      log("Không có AI model; dùng bộ thống kê cục bộ (local heuristic).");
+    }
+  } catch (error) {
+    logError(`Không chọn được AI model: ${error.message}`);
+    process.exitCode = 2;
+    return;
+  }
+
   try {
     registry.acquireProcessLock();
   } catch (error) {
@@ -85,7 +99,7 @@ async function main() {
 
   for (let attempt = 0; attempt <= MAX_STARTUP_RETRIES; attempt += 1) {
     try {
-      await runAgent({ launchMode: launchMode.key });
+      await runAgent({ launchMode: launchMode.key, aiModelId: aiModel?.id || null });
       return;
     } catch {
       // Lỗi đã được runAgent ghi log; ở đây chỉ quyết định thử lại.

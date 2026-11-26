@@ -90,7 +90,10 @@ function scanWorkingTree() {
 }
 
 function scanHistory() {
-  const history = git(["log", "-p", "--all", "--no-ext-diff", "--no-color"]);
+  // Chỉ quét lịch sử reachable từ HEAD. Dùng `--all` sẽ kéo cả stale refs
+  // (vd refs/agents/* cũ chứa Bearer token) vào kết quả → CI fail oan dù
+  // working tree và lịch sử branch đang push đều sạch (F1 trong backlog).
+  const history = git(["log", "-p", "--no-ext-diff", "--no-color", "HEAD"]);
   return scanText(history, "git history");
 }
 

@@ -97,6 +97,30 @@ const config = {
     // thấy ICON. 30 phút để không mở mini-app liên tục (trước đây ~15-30s/lần).
     inventoryCheckIntervalSeconds: 1800,
     ...(rawConfig.iconBuy || {})
+  },
+  // Mode [3] bait-upgrade: nâng thủ công từng nhịp, AI advisory + code guard.
+  baitUpgrade: {
+    targetGrade: 7,
+    main: { seasons: ["ICON"], playerIds: [], minGrade: 1, maxGrade: 13 },
+    bait: { seasons: [], maxPriceBP: 500000 },
+    minFillRatio: 0.92,
+    maxMaterials: 5,
+    maxBaitPerRound: 2,
+    maxBaitPerTarget: 8,
+    stopAfterConsecutiveFails: 3,
+    ai: { timeoutMs: 15000, maxRetries: 2, fallback: "local" },
+    safety: {
+      minRandomForMain: 0,
+      maxBaitPerRound: 2,
+      maxMainSpendBP: 2000000,
+      allowSoiCau: true,
+      maxSoiCauClicksPerRound: 3,
+      dryRun: false
+    },
+    market: { minLiquidity: 3, maxPriceBP: 500000, bands: ["108-112", "113-114", "115-118", "119-120"] },
+    fifa: { locale: "vn" },
+    timing: { roundTimeoutMs: 60000, cooldownMs: 3000 },
+    ...(rawConfig.baitUpgrade || {})
   }
 };
 
@@ -234,6 +258,33 @@ function validateIconBuyConfig() {
   }
 }
 
+function getBaitSpec() {
+  return { ...config.baitUpgrade };
+}
+
+function validateBaitConfig() {
+  const s = getBaitSpec();
+  if (!Number.isInteger(s.targetGrade) || s.targetGrade < 2 || s.targetGrade > 13) {
+    throw new Error("Cấu hình baitUpgrade.targetGrade phải nằm trong 2..13.");
+  }
+  const ratio = Number(s.minFillRatio);
+  if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 1) {
+    throw new Error("Cấu hình baitUpgrade.minFillRatio phải nằm trong (0..1].");
+  }
+  if (!Array.isArray(s.main?.seasons) || !s.main.seasons.length) {
+    throw new Error("Cấu hình baitUpgrade.main.seasons không được rỗng.");
+  }
+  if (!Number.isInteger(s.maxMaterials) || s.maxMaterials < 1 || s.maxMaterials > 5) {
+    throw new Error("Cấu hình baitUpgrade.maxMaterials phải nằm trong 1..5.");
+  }
+  if (!Number.isFinite(Number(s.ai?.timeoutMs)) || Number(s.ai.timeoutMs) < 1000) {
+    throw new Error("Cấu hình baitUpgrade.ai.timeoutMs phải >= 1000.");
+  }
+  if (!Number.isFinite(Number(s.market?.minLiquidity)) || Number(s.market.minLiquidity) < 1) {
+    throw new Error("Cấu hình baitUpgrade.market.minLiquidity phải >= 1.");
+  }
+}
+
 function validateWorkerConfig() {
   const w = config.worker || {};
   requirePositiveInteger(w.leaseSeconds, "worker.leaseSeconds");
@@ -249,17 +300,20 @@ function validateConfig() {
   validateBuyConfig();
   validateUpgradeConfig();
   validateIconBuyConfig();
+  validateBaitConfig();
   validateWorkerConfig();
 }
 
 module.exports = {
   config,
   getUpgradeSpec,
+  getBaitSpec,
   normalizeOvrSpec,
   normalizePriceSpec,
   validateBuyConfig,
   validateUpgradeConfig,
   validateIconBuyConfig,
+  validateBaitConfig,
   validateWorkerConfig,
   validateConfig
 };

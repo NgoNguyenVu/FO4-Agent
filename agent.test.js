@@ -3065,6 +3065,21 @@ test("dead shims and unused exports are removed", () => {
   assert.doesNotMatch(buyIndex, /buyMenu/);
 });
 
+test("controller wires Mode [3] bait-upgrade independently", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "features/controller.js"), "utf8");
+  assert.match(src, /baitEnabled = enabledFeatures\.has\("bait-upgrade"\)/);
+  assert.match(src, /async function main\(\{ launchMode, aiModelId = null \}/);
+  assert.match(src, /createAiClient\(/);
+  assert.match(src, /if \(baitEnabled\) \{[\s\S]{0,600}?runBaitRound/);
+  assert.match(src, /mode = buyUpgradeEnabled \? "master" : resolvedMode\.key/);
+  const launch = fs.readFileSync(path.join(__dirname, "lib/launch-cli.js"), "utf8");
+  assert.match(launch, /resolveAiModel/);
+  const entry = fs.readFileSync(path.join(__dirname, "agent.js"), "utf8");
+  assert.match(entry, /aiModelId: aiModel\?\.id \|\| null/);
+});
+
 test("/resetagent is handled before E006 classification and wakes every prompt", () => {
   const fs = require("node:fs");
   const path = require("node:path");

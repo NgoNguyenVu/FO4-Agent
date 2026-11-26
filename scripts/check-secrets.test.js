@@ -26,8 +26,8 @@ function createTempRepo(t) {
   return dir;
 }
 
-function git(dir, args) {
-  return execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+function git(dir, args, options = {}) {
+  return execFileSync("git", args, { cwd: dir, encoding: "utf8", ...options });
 }
 
 function writeFile(dir, relPath, content) {
@@ -166,6 +166,24 @@ test("secret scanner passes in history mode for a clean history", (t) => {
   const dir = createTempRepo(t);
   writeFile(dir, "src/app.js", "console.log('clean file');\n");
   commitAll(dir, "init");
+
+  expectClean(runScanner(dir, ["--history"]));
+});
+
+test("history mode ignores unrelated stale refs", (t) => {
+  const dir = createTempRepo(t);
+  writeFile(dir, "src/app.js", "console.log('clean');\n");
+  commitAll(dir, "init");
+
+  const secret = "Bearer " + "A".repeat(40);
+  const blob = git(dir, ["hash-object", "-w", "--stdin"], { input: secret });
+  const tree = git(dir, ["mktree"], {
+    input: `100644 blob ${blob.trim()}\tsecret.txt\n`
+  });
+  const commit = git(dir, ["commit-tree", tree.trim(), "-m", "stale"], {
+    input: ""
+  });
+  git(dir, ["update-ref", "refs/agents/stale", commit.trim()]);
 
   expectClean(runScanner(dir, ["--history"]));
 });

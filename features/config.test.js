@@ -37,6 +37,19 @@ test("config mẫu tồn tại và không còn block spendLimits/liveTrading", (
   assert.equal("liveTrading" in config, false);
 });
 
+test("baitUpgrade config is validated and example is in sync", () => {
+  const fs = require("node:fs");
+  const { config, getBaitSpec, validateConfig } = require("./config");
+  assert.equal(config.baitUpgrade.minFillRatio, 0.92);
+  assert.deepEqual(getBaitSpec().main.seasons, ["ICON"]);
+  assert.doesNotThrow(() => validateConfig());
+  const example = JSON.parse(
+    fs.readFileSync(require("node:path").join(__dirname, "../config.example.json"), "utf8")
+  );
+  assert.deepEqual(example.baitUpgrade.main.seasons, ["ICON"]);
+  assert.equal(example.baitUpgrade.minFillRatio, 0.92);
+});
+
 test("config hiện tại hợp lệ", () => {
   assert.doesNotThrow(() => validateConfig());
 });

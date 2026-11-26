@@ -38,5 +38,48 @@
     "maxBatchesPerRun": 1,
     "captureTtcnBaseline": true,
     "maxTaskSlots": 3
+  },
+  "baitUpgrade": {
+    "targetGrade": 7,
+    "main": {
+      "seasons": ["ICON"],
+      "playerIds": [],
+      "minGrade": 1,
+      "maxGrade": 13
+    },
+    "bait": {
+      "seasons": [],
+      "maxPriceBP": 500000
+    },
+    "minFillRatio": 0.92,
+    "maxMaterials": 5,
+    "maxBaitPerRound": 2,
+    "maxBaitPerTarget": 8,
+    "stopAfterConsecutiveFails": 3,
+    "ai": {
+      "timeoutMs": 15000,
+      "maxRetries": 2,
+      "fallback": "local"
+    },
+    "safety": {
+      "minRandomForMain": 0,
+      "maxBaitPerRound": 2,
+      "maxMainSpendBP": 2000000,
+      "allowSoiCau": true,
+      "maxSoiCauClicksPerRound": 3,
+      "dryRun": false
+    },
+    "market": {
+      "minLiquidity": 3,
+      "maxPriceBP": 500000,
+      "bands": ["108-112", "113-114", "115-118", "119-120"]
+    },
+    "fifa": {
+      "locale": "vn"
+    },
+    "timing": {
+      "roundTimeoutMs": 60000,
+      "cooldownMs": 3000
+    }
   }
 }
