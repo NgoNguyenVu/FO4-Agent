@@ -2,7 +2,7 @@
 "use strict";
 
 const { log } = require("../agent-log");
-const { finalizeDecision } = require("../../lib/bait-decision");
+const { finalizeDecision, guardTokenFor } = require("../../lib/bait-decision");
 const { combineProbabilities } = require("../../lib/phoi-solver");
 const {
   openBaitFrame,
@@ -85,6 +85,7 @@ async function runBaitRound({
   spec,
   aiClient,
   solveCombo = null,
+  marketProbe = null,
   logFn = log,
   timeoutMs = null
 } = {}) {
@@ -108,6 +109,24 @@ async function runBaitRound({
       `AI đề xuất ${ai.decision} (${ai._model}); random dự kiến ${ai.randomPrediction}; ` +
         `confidence ${ai.confidence}.`
     );
+    // HOLD (vd AI 429 liên tiếp) → không chọn thẻ, không bấm nâng.
+    if (ai.decision === "HOLD") {
+      return { action: "hold", reason: ai.reason || "ai-hold" };
+    }
+
+    let marketFloorAvailable = true;
+    if (typeof marketProbe === "function") {
+      try {
+        const floor = await marketProbe(spec);
+        marketFloorAvailable = Boolean(floor && floor.priceBP != null && floor.liquidity >= 3);
+      } catch (error) {
+        marketFloorAvailable = false;
+        logFn(`Không đọc được giá TTCN (${error.message}); HOLD an toàn.`);
+      }
+    }
+    if (!marketFloorAvailable) {
+      return { action: "hold", reason: "no-liquid-phoi" };
+    }
 
     // Chọn thẻ: cùng bậc cộng. Đây là thao tác UI nhưng KHÔNG tiêu thụ tài nguyên.
     await withUi(() => clickBaitButton(frame, BAIT_LABEL_BUTTONS.chooseMain));
@@ -125,6 +144,7 @@ async function runBaitRound({
       selectedMain: ai.decision === "MAIN" ? 1 : 0,
       selectedBait: ai.decision === "BAIT" ? 1 : 0,
       materialsCount: ui.materialsCount,
+      marketFloorAvailable,
       history: ui.history,
       candidate,
       capacity: ui.capacity,
@@ -157,11 +177,14 @@ async function runBaitRound({
     await withUi(() => addBaitMaterial(frame, addCount));
 
     const beforeClick = await readBaitUi(frame, Number(spec.targetGrade || 7));
-    if (
-      beforeClick.threshold !== ui.threshold ||
-      beforeClick.materialsCount === null ||
-      beforeClick.history.length !== ui.history.length
-    ) {
+    const expectedToken = guardTokenFor(snapshot);
+    const actualToken = guardTokenFor({
+      ...snapshot,
+      threshold: beforeClick.threshold,
+      materialsCount: beforeClick.materialsCount,
+      history: beforeClick.history
+    });
+    if (actualToken !== expectedToken) {
       logFn("UI thay đổi sau khi thêm phôi; guardToken không khớp, KHÔNG bấm Nâng cấp.");
       return { action: "hold", reason: "guard-token-mismatch" };
     }

@@ -88,6 +88,17 @@ test("runner picks same-tier MAIN/BAIT candidates and enforces AI schema", () =>
   assert.equal(AI_SCHEMA.required.includes("decision"), true);
 });
 
+test("runner fails closed on AI HOLD, thin market and guard mismatch", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "bait-upgrade", "runner.js"), "utf8");
+  assert.match(src, /if \(ai\.decision === "HOLD"\)/);
+  assert.match(src, /no-liquid-phoi/);
+  assert.match(src, /guardTokenFor\(snapshot\)/);
+  assert.match(src, /guard-token-mismatch/);
+  assert.match(src, /no-same-tier-candidate/);
+});
+
 test("snapshot token guard changes with threshold/history", () => {
   const snap = {
     targetId: "x", grade: 5, threshold: 712, selectedMain: 0, selectedBait: 1,

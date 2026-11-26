@@ -66,12 +66,17 @@ function formatUtcTimestamp(value) {
 }
 
 function describeRange(range = {}) {
-  if (range.session && !range.sessionStart) {
-    return "toàn bộ log (chưa tìm thấy /startagent)";
+  const sessionStart = range.sessionStartMs ?? range.sessionStart;
+  if (range.session && !sessionStart) {
+    return "toàn bộ log (chưa tìm thấy /startagent hoặc auto-start)";
   }
-  if (range.session && range.sessionStart) {
+  if (range.session && sessionStart) {
     const until = range.until ? ` đến ${formatUtcTimestamp(range.until)}` : "";
-    return `phiên từ /startagent lúc ${formatUtcTimestamp(range.sessionStart)}${until}`;
+    const source =
+      range.sessionSource === "cmd-auto-start"
+        ? "CMD auto-start"
+        : "/startagent";
+    return `phiên từ ${source} lúc ${formatUtcTimestamp(sessionStart)}${until}`;
   }
   if (range.since && range.until) {
     return `từ ${formatUtcTimestamp(range.since)} đến ${formatUtcTimestamp(range.until)}`;
@@ -177,7 +182,7 @@ function main() {
           "Cách dùng: node scripts/compare-telegram-log.js [--agent <path>] [--chat <path>]",
           "           [--session] [--since <thời gian>] [--until <thời gian>] [--json]",
           "",
-          "  --session       Chỉ tính từ lần /startagent gần nhất trong chat log.",
+          "  --session       Chỉ tính từ mốc gần nhất: /startagent trong chat hoặc CMD auto-start trong agent log.",
           '  --since <time>  Chỉ tính từ mốc thời gian (ISO hoặc "YYYY-MM-DD HH:mm:ss";',
           "                  không kèm múi giờ thì hiểu là giờ máy).",
           "  --until <time>  Chỉ tính đến mốc thời gian.",
